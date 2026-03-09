@@ -1,0 +1,62 @@
+# Tentacle configuration
+# Copy to ~/.config/tentacle/config.toml
+
+# API keys (prefer env vars: ANTHROPIC_API_KEY)
+# anthropic_api_key = "sk-ant-..."
+
+# Target repo for issue creation
+target_repo = "foundatron/octopusgarden"
+issue_label = "tentacle"
+
+# Scan settings
+scan_interval = "daily"
+backlog_interval = "weekly"
+max_issues_per_cycle = 3
+min_maturity_for_issue = 3
+relevance_threshold = 0.3
+monthly_budget = 10.0
+
+# LLM models
+filter_model = "claude-haiku-4-5-20251001"
+analyze_model = "claude-sonnet-4-5-20250514"
+
+# Database
+db_path = "~/.local/share/tentacle/tentacle.db"
+
+# Decay settings
+decay_grace_days = 30
+decay_interval_days = 60
+
+[sources.arxiv]
+enabled = true
+queries = [
+    "autonomous code generation",
+    "LLM software engineering",
+    "self-improving AI systems",
+    "automated software testing LLM",
+]
+max_results = 50
+
+[sources.semantic_scholar]
+enabled = true
+queries = [
+    "autonomous code generation large language models",
+    "LLM as judge evaluation",
+    "self-improving software systems",
+]
+max_results = 50
+
+[sources.hackernews]
+enabled = true
+queries = [
+    "autonomous code generation",
+    "LLM code review",
+    "software dark factory",
+    "AI software engineering",
+]
+max_results = 30
+
+[sources.rss]
+enabled = false
+queries = []
+max_results = 50

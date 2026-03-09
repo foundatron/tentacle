@@ -1,0 +1,13 @@
+[Unit]
+Description=Tentacle research scout for OctopusGarden
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ryan
+Environment=ANTHROPIC_API_KEY=
+EnvironmentFile=-%h/.config/tentacle/env
+ExecStart=/usr/bin/python3 -m tentacle run
+WorkingDirectory=%h/src/foundatron/tentacle
+TimeoutStartSec=600

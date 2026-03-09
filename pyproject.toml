@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tentacle"
+version = "0.1.0"
+description = "Research scout service for OctopusGarden"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.40.0",
+]
+
+[project.scripts]
+tentacle = "tentacle.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.15.0",
+    "mypy>=1.10",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "A",     # flake8-builtins
+    "C4",    # flake8-comprehensions
+    "SIM",   # flake8-simplify
+    "TC",   # flake8-type-checking
+    "RUF",   # ruff-specific
+    "S",     # flake8-bandit (security)
+    "T20",   # flake8-print
+]
+ignore = [
+    "S603",  # subprocess call with shell=false (we use subprocess intentionally)
+    "S607",  # start process with partial path (gh, git CLIs)
+    "S310",  # URL open audit - we only open known API endpoints
+    "S110",  # try-except-pass - intentional for optional date parsing
+    "SIM105", # contextlib.suppress - try/except is clearer for date parsing
+    "TC001", # type-checking imports - not worth the complexity for this project
+    "TC003", # type-checking imports for stdlib
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # assert allowed in tests
+"tentacle/cli.py" = ["T20"]  # print is intentional in status command
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
