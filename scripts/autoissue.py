@@ -359,9 +359,7 @@ def unlock_issue(issue_number: str) -> None:
     )
 
 
-def create_pr(
-    branch: str, issue_number: str, issue_title: str, issue_work_dir: Path
-) -> None:
+def create_pr(branch: str, issue_number: str, issue_title: str, issue_work_dir: Path) -> None:
     changes_summary = ""
     reviewed_plan = issue_work_dir / "reviewed-plan.md"
     if reviewed_plan.is_file():
@@ -454,9 +452,7 @@ def wait_for_ci(pr_number: str) -> int:
                 log("All CI checks passed!")
                 return 0
         if elapsed == 0:
-            log(
-                f"Checks still running, polling every {CI_POLL_INTERVAL}s (max {MAX_CI_WAIT}s)..."
-            )
+            log(f"Checks still running, polling every {CI_POLL_INTERVAL}s (max {MAX_CI_WAIT}s)...")
         time.sleep(CI_POLL_INTERVAL)
         elapsed += CI_POLL_INTERVAL
     log("Timed out waiting for CI.")
@@ -468,9 +464,7 @@ def wait_for_ci(pr_number: str) -> int:
 # ---------------------------------------------------------------------------
 
 
-def push_with_retry(
-    branch: str, prompt_file: Path, impl_model: str, budget: str | None
-) -> None:
+def push_with_retry(branch: str, prompt_file: Path, impl_model: str, budget: str | None) -> None:
     for attempt in range(MAX_PUSH_RETRIES + 1):
         result = subprocess.run(
             ["git", "push", "--force-with-lease", "-u", "origin", branch],
@@ -491,9 +485,7 @@ def push_with_retry(
             f"Push failed (likely pre-push hook). Attempting fix (retry {retry_num}/{MAX_PUSH_RETRIES})..."
         )
         write_prompt(prompt_file, push_fix_prompt(push_output))
-        run_phase_nocapture(
-            f"Push Fix (retry {retry_num})", impl_model, prompt_file, budget
-        )
+        run_phase_nocapture(f"Push Fix (retry {retry_num})", impl_model, prompt_file, budget)
 
 
 def ci_retry_loop(
@@ -790,21 +782,13 @@ def parse_args() -> argparse.Namespace:
         help="GitHub issue numbers to solve",
     )
     parser.add_argument("--budget", default=None, help="Max budget per phase in USD")
-    parser.add_argument(
-        "--plan-model", default="opus", help="Model for planning (default: opus)"
-    )
-    parser.add_argument(
-        "--review-model", default="opus", help="Model for review (default: opus)"
-    )
+    parser.add_argument("--plan-model", default="opus", help="Model for planning (default: opus)")
+    parser.add_argument("--review-model", default="opus", help="Model for review (default: opus)")
     parser.add_argument(
         "--impl-model", default=None, help="Model for implementation (default: sonnet)"
     )
-    parser.add_argument(
-        "--no-merge", action="store_true", help="Skip auto-merge after CI passes"
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Print pipeline without running"
-    )
+    parser.add_argument("--no-merge", action="store_true", help="Skip auto-merge after CI passes")
+    parser.add_argument("--dry-run", action="store_true", help="Print pipeline without running")
     args = parser.parse_args()
 
     # Validate issue numbers
@@ -872,9 +856,7 @@ def main() -> None:
             log(
                 f"[dry-run]   Phase 3: Implement       model=adaptive        budget={budget_display}"
             )
-            log(
-                f"[dry-run]     (simple/moderate -> {impl_model}, complex -> {args.plan_model})"
-            )
+            log(f"[dry-run]     (simple/moderate -> {impl_model}, complex -> {args.plan_model})")
             log(
                 f"[dry-run]   Phase 4: Review Code     model={args.review_model}  budget={budget_display}"
             )
@@ -890,9 +872,7 @@ def main() -> None:
 
         # Phase 1: Plan
         log(f"Phase 1: Plan (model: {args.plan_model})...")
-        write_prompt(
-            prompt_file, plan_prompt(issue_number, issue_title, issue_snapshot)
-        )
+        write_prompt(prompt_file, plan_prompt(issue_number, issue_title, issue_snapshot))
         run_phase(
             "Phase 1: Plan",
             args.plan_model,
@@ -928,9 +908,7 @@ def main() -> None:
         log(f"Phase 3: Implement (model: {phase3_model})...")
         reviewed_plan_content = (issue_work_dir / "reviewed-plan.md").read_text()
         write_prompt(prompt_file, implement_prompt(reviewed_plan_content))
-        run_phase_nocapture(
-            "Phase 3: Implement", phase3_model, prompt_file, args.budget
-        )
+        run_phase_nocapture("Phase 3: Implement", phase3_model, prompt_file, args.budget)
 
         commit_count = verify_commits_exist()
         if commit_count == 0:
@@ -964,14 +942,10 @@ def main() -> None:
             log("Phase 5: Skipped (review assessment: PASS)")
         else:
             log(f"Phase 5: Fix Findings (model: {impl_model})...")
-            review_findings_content = (
-                issue_work_dir / "review-findings.md"
-            ).read_text()
+            review_findings_content = (issue_work_dir / "review-findings.md").read_text()
             write_prompt(prompt_file, fix_findings_prompt(review_findings_content))
             try:
-                run_phase_nocapture(
-                    "Phase 5: Fix Findings", impl_model, prompt_file, args.budget
-                )
+                run_phase_nocapture("Phase 5: Fix Findings", impl_model, prompt_file, args.budget)
             except PhaseError:
                 log("  WARNING: Phase 5 failed, discarding partial changes")
                 subprocess.run(["git", "checkout", "--", "."], check=True)
@@ -997,9 +971,7 @@ def main() -> None:
 
         # Phase 6: CI Retry Loop
         log("Phase 6: CI check and retry...")
-        ci_passed = ci_retry_loop(
-            pr_number, branch, prompt_file, impl_model, args.budget, pr_url
-        )
+        ci_passed = ci_retry_loop(pr_number, branch, prompt_file, impl_model, args.budget, pr_url)
 
         if not ci_passed:
             log(f"CI did not pass. PR left open for manual review: {pr_url}")
