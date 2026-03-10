@@ -24,7 +24,6 @@ dev = [
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-extend-exclude = ["scripts/"]
 
 [tool.ruff.lint]
 select = [
@@ -56,6 +55,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]  # assert allowed in tests
 "tentacle/cli.py" = ["T20"]  # print is intentional in status command
+"scripts/*" = ["T20"]  # print is intentional in CLI scripts
 
 [tool.mypy]
 python_version = "3.12"

@@ -128,12 +128,11 @@ def run_phase(
     """Run a claude phase, capturing text output to a file."""
     log(f"  Running {phase_name} (model: {model})...")
     prompt_content = prompt_file.read_text()
-    args = _claude_args(model, budget) + ["--output-format", "text"]
+    args = [*_claude_args(model, budget), "--output-format", "text"]
     result = subprocess.run(
         args,
         input=prompt_content,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
     )
     if result.returncode != 0:
@@ -273,7 +272,7 @@ def get_diff_for_review() -> str:
             if len(parts) >= 3:
                 top_files.append(parts[2])
         if top_files:
-            per_file_result = run_cmd(["git", "diff", "main...HEAD", "--"] + top_files)
+            per_file_result = run_cmd(["git", "diff", "main...HEAD", "--", *top_files])
             per_file_lines = per_file_result.stdout.splitlines()[:DIFF_TRUNCATE_LINES]
             per_file_diff = "\n".join(per_file_lines)
         else:
@@ -482,7 +481,8 @@ def push_with_retry(branch: str, prompt_file: Path, impl_model: str, budget: str
             raise PhaseError("push failed")
         retry_num = attempt + 1
         log(
-            f"Push failed (likely pre-push hook). Attempting fix (retry {retry_num}/{MAX_PUSH_RETRIES})..."
+            f"Push failed (likely pre-push hook). "
+            f"Attempting fix (retry {retry_num}/{MAX_PUSH_RETRIES})..."
         )
         write_prompt(prompt_file, push_fix_prompt(push_output))
         run_phase_nocapture(f"Push Fix (retry {retry_num})", impl_model, prompt_file, budget)
@@ -600,7 +600,8 @@ Your job is to evaluate the plan on its own merits.
 Review the plan for:
 1. Completeness: Are all necessary changes listed? Any missing files or edge cases?
 2. Correctness: Do the proposed changes make sense architecturally?
-3. Design invariants: Does the plan respect holdout isolation, error handling conventions, etc.? (See CLAUDE.md)
+3. Design invariants: Does the plan respect holdout isolation, error handling conventions, etc.?
+   (See CLAUDE.md)
 4. Over-engineering: Is the approach the simplest that could work? Anything unnecessary?
 5. Tests: Are tests planned for all new functionality? Any missing cases?
 6. Security: Any injection risks, leaked secrets, or OWASP concerns?
@@ -640,7 +641,8 @@ Instructions:
 1. Implement all changes described in the plan. Follow the coding standards in CLAUDE.md.
 2. Write tests as specified in the plan.
 3. Run `make build && make test && make lint && make docs` and fix any issues.
-4. Stage and commit all changes with a conventional commit message (e.g., feat(package): description).
+4. Stage and commit all changes with a conventional commit message
+   (e.g., feat(package): description).
 5. Do NOT push the branch. Do NOT create a PR. Only commit locally."""
 
 
@@ -821,8 +823,10 @@ def main() -> None:
     titles = snapshot_issues(args.issues, work_dir)
     if not args.dry_run:
         lock_issues(args.issues)
+    locked = "" if args.dry_run else " and locked"
     log(
-        f"All {len(args.issues)} issues snapshotted{'' if args.dry_run else ' and locked'}. No further network fetches for issue content."
+        f"All {len(args.issues)} issues snapshotted{locked}. "
+        "No further network fetches for issue content."
     )
 
     total = len(args.issues)
@@ -845,27 +849,17 @@ def main() -> None:
         checkout_or_create_branch(branch)
 
         if args.dry_run:
-            budget_display = args.budget or "unlimited"
+            bd = args.budget or "unlimited"
+            pm = args.plan_model
+            rm = args.review_model
             log(f"[dry-run] 6-phase pipeline for issue #{issue_number}:")
-            log(
-                f"[dry-run]   Phase 1: Plan            model={args.plan_model}    budget={budget_display}"
-            )
-            log(
-                f"[dry-run]   Phase 2: Review Plan     model={args.review_model}  budget={budget_display}"
-            )
-            log(
-                f"[dry-run]   Phase 3: Implement       model=adaptive        budget={budget_display}"
-            )
-            log(f"[dry-run]     (simple/moderate -> {impl_model}, complex -> {args.plan_model})")
-            log(
-                f"[dry-run]   Phase 4: Review Code     model={args.review_model}  budget={budget_display}"
-            )
-            log(
-                f"[dry-run]   Phase 5: Fix Findings    model={impl_model}    budget={budget_display}"
-            )
-            log(
-                f"[dry-run]   Phase 6: CI Retry        model={impl_model}    budget={budget_display} (max 2 retries)"
-            )
+            log(f"[dry-run]   Phase 1: Plan          model={pm}  budget={bd}")
+            log(f"[dry-run]   Phase 2: Review Plan   model={rm}  budget={bd}")
+            log(f"[dry-run]   Phase 3: Implement     model=adaptive  budget={bd}")
+            log(f"[dry-run]     (simple/moderate -> {impl_model}, complex -> {pm})")
+            log(f"[dry-run]   Phase 4: Review Code   model={rm}  budget={bd}")
+            log(f"[dry-run]   Phase 5: Fix Findings  model={impl_model}  budget={bd}")
+            log(f"[dry-run]   Phase 6: CI Retry      model={impl_model}  budget={bd} (max 2)")
             continue
 
         prompt_file = issue_work_dir / "prompt.tmp"
