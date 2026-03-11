@@ -17,7 +17,7 @@ from tentacle.decay import apply_decay
 from tentacle.issues import create_issue
 from tentacle.llm.analyze import analyze_article
 from tentacle.llm.client import BudgetExceededError, CostTracker, LLMClient
-from tentacle.llm.filter import filter_article
+from tentacle.llm.filter import filter_batch
 from tentacle.sources.arxiv import ArxivAdapter
 from tentacle.sources.base import SourceAdapter
 from tentacle.sources.hackernews import HackerNewsAdapter
@@ -159,16 +159,17 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
             total_new += articles_new
 
             # Filter
-            relevant_articles = []
-            for article in new_articles:
-                score, reasoning = filter_article(
-                    client,
-                    article,
-                    model=config.filter_model,
-                    threshold=config.relevance_threshold,
-                )
-                if score >= config.relevance_threshold:
-                    relevant_articles.append((article, score, reasoning))
+            filter_results = filter_batch(
+                client,
+                new_articles,
+                model=config.filter_model,
+                threshold=config.relevance_threshold,
+            )
+            relevant_articles = [
+                (article, score, reasoning)
+                for article, (score, reasoning) in zip(new_articles, filter_results, strict=True)
+                if score >= config.relevance_threshold
+            ]
 
             articles_relevant = len(relevant_articles)
             total_relevant += articles_relevant

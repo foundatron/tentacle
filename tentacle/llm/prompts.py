@@ -27,6 +27,31 @@ Title: {title}
 
 Abstract: {abstract}"""
 
+FILTER_BATCH_SYSTEM = """\
+You are a research relevance filter for OctopusGarden, an autonomous software dark factory.
+
+OctopusGarden generates code from specs using an attractor loop (LLM generates, validator \
+scores, failures feed back). Key areas of interest:
+- Autonomous code generation and self-improving systems
+- LLM-as-judge evaluation and scoring
+- Prompt engineering for code generation
+- Software testing automation and validation
+- Convergence algorithms and optimization
+- Docker/container orchestration for build/test
+- Cost optimization for LLM API usage
+- Software dark factories and lights-out manufacturing
+
+You will be given a numbered list of articles (title and abstract). Rate each article's \
+relevance to OctopusGarden on a scale of 0.0 to 1.0.
+
+Respond with ONLY a JSON array, one entry per article, using the 1-based index shown in the list:
+[{"index": 1, "relevance": 0.XX, "reasoning": "one sentence explanation"}, ...]"""
+
+FILTER_BATCH_USER = """\
+Rate the following articles:
+
+{articles}"""
+
 ANALYZE_SYSTEM = """\
 You are a research analyst for OctopusGarden, an autonomous software dark factory that \
 generates code from specs using an attractor loop.

@@ -84,7 +84,7 @@ class TestCmdRun(unittest.TestCase):
     @patch("tentacle.cli.LLMClient")
     @patch("tentacle.cli.fetch_context")
     @patch("tentacle.cli._get_sources")
-    @patch("tentacle.cli.filter_article")
+    @patch("tentacle.cli.filter_batch")
     def test_cmd_run_budget_exceeded_stops_gracefully(
         self,
         mock_filter: MagicMock,
@@ -118,7 +118,7 @@ class TestCmdRun(unittest.TestCase):
             ("hn", ["llm"], 10, source2_adapter),
         ]
 
-        # filter_article raises BudgetExceededError on the first call
+        # filter_batch raises BudgetExceededError on the first call
         mock_filter.side_effect = BudgetExceededError(2.1, 2.0, "scan")
 
         config = Config()
@@ -126,6 +126,14 @@ class TestCmdRun(unittest.TestCase):
         args = Namespace(dry_run=False)
 
         cmd_run(args, config)
+
+        # filter_batch was called with a list of articles (not a single article)
+        mock_filter.assert_called_once()
+        call_args = mock_filter.call_args
+        articles_arg = (
+            call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("articles")
+        )
+        assert isinstance(articles_arg, list), "filter_batch must receive a list of articles"
 
         # First source scan run was started and finished with budget_exceeded
         mock_store.start_scan_run.assert_called_once_with("arxiv")
@@ -138,7 +146,7 @@ class TestCmdRun(unittest.TestCase):
     @patch("tentacle.cli.LLMClient")
     @patch("tentacle.cli.fetch_context")
     @patch("tentacle.cli._get_sources")
-    @patch("tentacle.cli.filter_article")
+    @patch("tentacle.cli.filter_batch")
     def test_cmd_run_per_source_cost_delta(
         self,
         mock_filter: MagicMock,
@@ -184,7 +192,9 @@ class TestCmdRun(unittest.TestCase):
 
         call_count = 0
 
-        def filter_side_effect(*args: object, **kwargs: object) -> tuple[float, str]:
+        def filter_side_effect(
+            _client: object, articles: list[Article], **kwargs: object
+        ) -> list[tuple[float, str]]:
             nonlocal call_count
             call_count += 1
             # Add cost to the *same* tracker cmd_run uses for cost_before snapshots
@@ -197,7 +207,7 @@ class TestCmdRun(unittest.TestCase):
                     cost_usd=cost,
                 )
             )
-            return 0.1, "low relevance"  # below threshold, no analyze
+            return [(0.1, "low relevance")] * len(articles)  # below threshold, no analyze
 
         mock_filter.side_effect = filter_side_effect
 
