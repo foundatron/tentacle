@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-from tentacle.issues import _format_body, create_issue
+from tentacle.issues import (
+    _format_body,
+    _sanitize_search_query,
+    _title_similarity,
+    check_duplicate,
+    create_issue,
+)
 from tentacle.models import Analysis, Article
 
 
@@ -36,6 +44,113 @@ def _make_analysis() -> Analysis:
     )
 
 
+class TestTitleSimilarity(unittest.TestCase):
+    def test_identical(self) -> None:
+        assert _title_similarity("add streaming support", "add streaming support") == 1.0
+
+    def test_disjoint(self) -> None:
+        assert _title_similarity("add streaming", "remove caching") == 0.0
+
+    def test_partial_overlap(self) -> None:
+        sim = _title_similarity("add streaming support", "add caching support")
+        # intersection: {add, support} = 2; union: {add, streaming, support, caching} = 4
+        assert sim == 0.5
+
+    def test_case_insensitive(self) -> None:
+        assert _title_similarity("Add Streaming", "add streaming") == 1.0
+
+    def test_strips_cc_prefix(self) -> None:
+        # Different type prefixes but identical bodies — should be 1.0 after stripping
+        assert _title_similarity("feat(llm): add streaming", "fix(llm): add streaming") == 1.0
+
+    def test_empty_after_strip(self) -> None:
+        # Both empty after prefix stripping — should return 0.0 (not division-by-zero)
+        assert _title_similarity("feat:", "fix:") == 0.0
+
+
+class TestSanitizeSearchQuery(unittest.TestCase):
+    def test_plain_title_unchanged(self) -> None:
+        assert _sanitize_search_query("add streaming support") == "add streaming support"
+
+    def test_strips_quotes(self) -> None:
+        result = _sanitize_search_query('feat: "add" streaming')
+        assert '"' not in result
+
+    def test_strips_github_operators(self) -> None:
+        result = _sanitize_search_query("add NOT remove OR cache AND stream")
+        assert "NOT" not in result
+        assert "OR" not in result
+        assert "AND" not in result
+
+    def test_strips_special_chars(self) -> None:
+        result = _sanitize_search_query("foo:bar (baz) <qux>")
+        assert ":" not in result
+        assert "(" not in result
+        assert "<" not in result
+
+    def test_collapses_whitespace(self) -> None:
+        result = _sanitize_search_query("add   streaming")
+        assert "  " not in result
+
+
+class TestCheckDuplicate(unittest.TestCase):
+    @patch("tentacle.issues.subprocess.run")
+    def test_finds_match(self, mock_run: MagicMock) -> None:
+        issues = [
+            {
+                "title": "feat(llm): add streaming support",
+                "number": 7,
+                "url": "https://github.com/org/repo/issues/7",
+            }
+        ]
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(issues))
+
+        result = check_duplicate("feat(api): add streaming support", repo="org/repo")
+        assert result == "https://github.com/org/repo/issues/7"
+
+    @patch("tentacle.issues.subprocess.run")
+    def test_no_match(self, mock_run: MagicMock) -> None:
+        issues = [
+            {
+                "title": "fix(db): remove stale connections",
+                "number": 3,
+                "url": "https://github.com/org/repo/issues/3",
+            }
+        ]
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(issues))
+
+        result = check_duplicate("feat(llm): add streaming support", repo="org/repo")
+        assert result is None
+
+    @patch("tentacle.issues.subprocess.run")
+    def test_gh_failure_returns_none(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=1, stderr="authentication required", stdout="")
+
+        result = check_duplicate("feat: add thing", repo="org/repo")
+        assert result is None
+
+    @patch("tentacle.issues.subprocess.run")
+    def test_timeout_returns_none(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="gh", timeout=30)
+
+        result = check_duplicate("feat: add thing", repo="org/repo")
+        assert result is None
+
+    @patch("tentacle.issues.subprocess.run")
+    def test_gh_not_installed_returns_none(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = FileNotFoundError
+
+        result = check_duplicate("feat: add thing", repo="org/repo")
+        assert result is None
+
+    @patch("tentacle.issues.subprocess.run")
+    def test_invalid_json_returns_none(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="not valid json{{")
+
+        result = check_duplicate("feat: add thing", repo="org/repo")
+        assert result is None
+
+
 class TestIssueCreation(unittest.TestCase):
     def test_dry_run_returns_none(self) -> None:
         result = create_issue(
@@ -58,8 +173,9 @@ class TestIssueCreation(unittest.TestCase):
         )
         assert result is None
 
+    @patch("tentacle.issues.check_duplicate", return_value=None)
     @patch("tentacle.issues.subprocess.run")
-    def test_successful_creation(self, mock_run: MagicMock) -> None:
+    def test_successful_creation(self, mock_run: MagicMock, _mock_dup: MagicMock) -> None:
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout="https://github.com/foundatron/octopusgarden/issues/42\n",
@@ -76,8 +192,9 @@ class TestIssueCreation(unittest.TestCase):
         assert result.github_number == 42
         assert result.maturity_score == 4
 
+    @patch("tentacle.issues.check_duplicate", return_value=None)
     @patch("tentacle.issues.subprocess.run")
-    def test_gh_failure_returns_none(self, mock_run: MagicMock) -> None:
+    def test_gh_failure_returns_none(self, mock_run: MagicMock, _mock_dup: MagicMock) -> None:
         mock_run.return_value = MagicMock(returncode=1, stderr="error")
 
         result = create_issue(
@@ -87,6 +204,19 @@ class TestIssueCreation(unittest.TestCase):
             label="tentacle",
         )
         assert result is None
+
+    @patch("tentacle.issues.subprocess.run")
+    def test_skips_duplicate(self, mock_run: MagicMock) -> None:
+        dup_url = "https://github.com/foundatron/octopusgarden/issues/99"
+        with patch("tentacle.issues.check_duplicate", return_value=dup_url):
+            result = create_issue(
+                _make_article(),
+                _make_analysis(),
+                repo="foundatron/octopusgarden",
+                label="tentacle",
+            )
+        assert result is None
+        mock_run.assert_not_called()
 
     def test_format_body_adds_source(self) -> None:
         body = _format_body(_make_article(), _make_analysis())

@@ -264,6 +264,19 @@ class Store:
         self._conn.commit()
         return cursor.lastrowid or 0
 
+    def get_issues_by_source_url(self, url: str) -> list[Issue]:
+        """Return all issues whose source article matches the given URL."""
+        rows = self._conn.execute(
+            """SELECT i.id, i.article_id, i.analysis_id, i.github_number, i.github_url,
+                      i.title, i.created_at, i.maturity_score, i.current_maturity,
+                      i.last_decay_at, i.status
+               FROM issues i
+               JOIN articles a ON i.article_id = a.id
+               WHERE a.url = ?""",
+            (url,),
+        ).fetchall()
+        return [_row_to_issue(r) for r in rows]
+
     def get_open_issues(self) -> list[Issue]:
         rows = self._conn.execute(
             "SELECT * FROM issues WHERE status = 'open' ORDER BY created_at DESC"

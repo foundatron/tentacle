@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -151,6 +152,11 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
                     analysis.maturity_score >= config.min_maturity_for_issue
                     and total_issues < config.max_issues_per_cycle
                 ):
+                    # URL-based dedup: skip without consuming a budget slot so
+                    # more net-new issues can be created within the cycle limit.
+                    if store.get_issues_by_source_url(article.url):
+                        logger.info("Skipping — already has issue for this URL: %s", article.url)
+                        continue
                     issue = create_issue(
                         article,
                         analysis,
@@ -162,6 +168,13 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
                         store.insert_issue(issue)
                         issues_created += 1
                         total_issues += 1
+                        if total_issues < config.max_issues_per_cycle:
+                            delay = config.issue_creation_delay
+                            logger.info(
+                                "Waiting %ds before next issue creation to avoid rate limits",
+                                delay,
+                            )
+                            time.sleep(delay)
 
             source_cost = cost_tracker.total_cost - cost_before
             store.finish_scan_run(
