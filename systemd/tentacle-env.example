@@ -1,0 +1,16 @@
+# Tentacle environment file — secrets only (API keys, tokens).
+# For all other configuration options see config.example.toml.
+#
+# Copy to ~/.config/tentacle/env and restrict permissions:
+#   cp tentacle-env.example ~/.config/tentacle/env
+#   chmod 600 ~/.config/tentacle/env
+#
+# After copying and editing, reload and enable the timers:
+#   systemctl daemon-reload
+#   systemctl enable --now tentacle.timer tentacle-backlog.timer
+
+# Required: Anthropic API key for LLM calls
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional: Semantic Scholar API key for higher rate limits
+S2_API_KEY=
