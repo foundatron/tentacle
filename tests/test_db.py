@@ -432,6 +432,30 @@ class TestStore(unittest.TestCase):
         results = self.store.get_issues_by_source_url("https://example.com/nonexistent")
         assert results == []
 
+    def test_article_metadata_round_trip(self) -> None:
+        article = _make_article("meta_test")
+        article.metadata = {
+            "points": 42,
+            "num_comments": 7,
+            "discussion_url": "https://news.ycombinator.com/item?id=12345",
+        }
+        self.store.insert_article(article)
+        got = self.store.get_article("meta_test")
+        assert got is not None
+        assert got.metadata == {
+            "points": 42,
+            "num_comments": 7,
+            "discussion_url": "https://news.ycombinator.com/item?id=12345",
+        }
+
+    def test_article_metadata_none_round_trip(self) -> None:
+        article = _make_article("no_meta_test")
+        article.metadata = None
+        self.store.insert_article(article)
+        got = self.store.get_article("no_meta_test")
+        assert got is not None
+        assert got.metadata is None
+
     def test_get_issues_by_source_url_multiple_issues(self) -> None:
         article = _make_article()
         self.store.insert_article(article)

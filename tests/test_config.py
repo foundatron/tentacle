@@ -9,7 +9,14 @@ import warnings
 from pathlib import Path
 from unittest.mock import patch
 
-from tentacle.config import Config, ConfigError, SourceConfig, load_config, validate
+from tentacle.config import (
+    Config,
+    ConfigError,
+    HackerNewsSourceConfig,
+    SourceConfig,
+    load_config,
+    validate,
+)
 
 
 class TestValidate(unittest.TestCase):
@@ -127,6 +134,51 @@ class TestValidate(unittest.TestCase):
 
         config = self._valid()
         config.semantic_scholar.days_back = None
+        validate(config)  # should not raise
+
+
+class TestHackerNewsConfig(unittest.TestCase):
+    def _valid(self) -> Config:
+        c = Config()
+        c.anthropic_api_key = "dummy"
+        return c
+
+    def test_hackernews_config_defaults(self) -> None:
+        cfg = HackerNewsSourceConfig()
+        assert cfg.min_points == 10
+        assert cfg.days_back is None
+        assert cfg.story_type == "story"
+
+    def test_hackernews_config_validation(self) -> None:
+        # negative min_points
+        config = self._valid()
+        config.hackernews.min_points = -1
+        with self.assertRaises(ConfigError):
+            validate(config)
+
+        # days_back = 0
+        config = self._valid()
+        config.hackernews.days_back = 0
+        with self.assertRaises(ConfigError):
+            validate(config)
+
+        # invalid story_type
+        config = self._valid()
+        config.hackernews.story_type = "invalid"
+        with self.assertRaises(ConfigError):
+            validate(config)
+
+    def test_hackernews_config_valid_values(self) -> None:
+        config = self._valid()
+        config.hackernews.min_points = 0
+        config.hackernews.days_back = 1
+        config.hackernews.story_type = "show_hn"
+        validate(config)  # should not raise
+
+        config.hackernews.story_type = "ask_hn"
+        validate(config)  # should not raise
+
+        config.hackernews.days_back = None
         validate(config)  # should not raise
 
 

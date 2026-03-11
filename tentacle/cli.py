@@ -75,7 +75,11 @@ def _get_sources(config: Config) -> list[tuple[str, list[str], int, SourceAdapte
                 "hn",
                 config.hackernews.queries,
                 config.hackernews.max_results,
-                HackerNewsAdapter(),
+                HackerNewsAdapter(
+                    min_points=config.hackernews.min_points,
+                    days_back=config.hackernews.days_back,
+                    story_type=config.hackernews.story_type,
+                ),
             )
         )
     if config.rss.enabled and config.rss.queries:

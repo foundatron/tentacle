@@ -39,7 +39,9 @@ HN_RESPONSE = b"""\
       "title": "Show HN: AI Code Generator",
       "url": "https://example.com/ai-codegen",
       "author": "hacker",
-      "created_at": "2024-01-15T10:00:00Z"
+      "created_at": "2024-01-15T10:00:00Z",
+      "points": 42,
+      "num_comments": 7
     }
   ]
 }"""
@@ -261,6 +263,104 @@ class TestHackerNewsAdapter(unittest.TestCase):
         assert a.title == "Show HN: AI Code Generator"
         assert a.url == "https://example.com/ai-codegen"
         assert a.source_id == "12345"
+        assert a.metadata is not None
+        assert a.metadata["points"] == 42
+        assert a.metadata["num_comments"] == 7
+        assert a.metadata["discussion_url"] == "https://news.ycombinator.com/item?id=12345"
+
+    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    def test_min_points_in_query_params(self, mock_urlopen_fn: MagicMock) -> None:
+        mock_urlopen_fn.return_value = _mock_urlopen(b'{"hits": []}')
+        adapter = HackerNewsAdapter(min_points=25)
+        adapter.fetch(["query"], max_results=10)
+
+        url = mock_urlopen_fn.call_args[0][0].full_url
+        parsed = urllib.parse.urlparse(url)
+        params = urllib.parse.parse_qs(parsed.query)
+        assert "numericFilters" in params
+        assert "points>=25" in params["numericFilters"][0]
+
+    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    def test_days_back_in_query_params(self, mock_urlopen_fn: MagicMock) -> None:
+        mock_urlopen_fn.return_value = _mock_urlopen(b'{"hits": []}')
+        fixed_now = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
+        expected_ts = int((fixed_now - timedelta(days=7)).timestamp())
+
+        with patch("tentacle.sources.hackernews._utcnow", return_value=fixed_now):
+            adapter = HackerNewsAdapter(days_back=7)
+            adapter.fetch(["query"], max_results=10)
+
+        url = mock_urlopen_fn.call_args[0][0].full_url
+        parsed = urllib.parse.urlparse(url)
+        params = urllib.parse.parse_qs(parsed.query)
+        assert "numericFilters" in params
+        assert f"created_at_i>{expected_ts}" in params["numericFilters"][0]
+
+    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    def test_story_type_tag(self, mock_urlopen_fn: MagicMock) -> None:
+        mock_urlopen_fn.return_value = _mock_urlopen(b'{"hits": []}')
+        adapter = HackerNewsAdapter(story_type="show_hn")
+        adapter.fetch(["query"], max_results=10)
+
+        url = mock_urlopen_fn.call_args[0][0].full_url
+        parsed = urllib.parse.urlparse(url)
+        params = urllib.parse.parse_qs(parsed.query)
+        assert params["tags"] == ["show_hn"]
+
+    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    def test_empty_results(self, mock_urlopen_fn: MagicMock) -> None:
+        mock_urlopen_fn.return_value = _mock_urlopen(b'{"hits": []}')
+        adapter = HackerNewsAdapter()
+        articles = adapter.fetch(["query"], max_results=10)
+        assert articles == []
+
+    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    def test_missing_points_defaults_to_zero(self, mock_urlopen_fn: MagicMock) -> None:
+        response = b"""\
+{
+  "hits": [
+    {
+      "objectID": "99999",
+      "title": "Some HN Post",
+      "url": "https://example.com/post",
+      "author": "user",
+      "created_at": "2024-01-01T00:00:00Z"
+    }
+  ]
+}"""
+        mock_urlopen_fn.return_value = _mock_urlopen(response)
+        adapter = HackerNewsAdapter()
+        articles = adapter.fetch(["query"], max_results=10)
+
+        assert len(articles) == 1
+        assert articles[0].metadata is not None
+        assert articles[0].metadata["points"] == 0
+
+    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    def test_missing_url_falls_back_to_discussion(self, mock_urlopen_fn: MagicMock) -> None:
+        response = b"""\
+{
+  "hits": [
+    {
+      "objectID": "77777",
+      "title": "Ask HN: Something",
+      "author": "asker",
+      "created_at": "2024-01-01T00:00:00Z",
+      "points": 5,
+      "num_comments": 3
+    }
+  ]
+}"""
+        mock_urlopen_fn.return_value = _mock_urlopen(response)
+        adapter = HackerNewsAdapter()
+        articles = adapter.fetch(["query"], max_results=10)
+
+        assert len(articles) == 1
+        a = articles[0]
+        discussion_url = "https://news.ycombinator.com/item?id=77777"
+        assert a.url == discussion_url
+        assert a.metadata is not None
+        assert a.metadata["discussion_url"] == discussion_url
 
 
 def _make_429_error(retry_after: str | None = "1") -> urllib.error.HTTPError:

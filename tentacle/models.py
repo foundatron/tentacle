@@ -23,6 +23,7 @@ class Article:
     tags: list[str] | None = None
     full_text: str | None = None
     access_status: str = "unknown"
+    metadata: dict[str, str | int | float | bool | None] | None = None
 
 
 @dataclasses.dataclass
