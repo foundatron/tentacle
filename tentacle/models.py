@@ -92,3 +92,14 @@ class ScanRun:
     issues_created: int = 0
     total_cost_usd: float = 0.0
     status: str = "running"
+
+
+@dataclasses.dataclass
+class ContextEntry:
+    """Cached context file from octopusgarden."""
+
+    filename: str
+    content: str
+    checksum: str
+    fetched_at: datetime.datetime
+    id: int | None = None

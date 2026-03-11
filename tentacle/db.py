@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
-from tentacle.models import Analysis, Article, DecayEntry, Issue, ScanRun
+from tentacle.models import Analysis, Article, ContextEntry, DecayEntry, Issue, ScanRun
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +105,14 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     issues_created  INTEGER DEFAULT 0,
     total_cost_usd  REAL DEFAULT 0.0,
     status          TEXT NOT NULL DEFAULT 'running'
+);
+
+CREATE TABLE IF NOT EXISTS context_cache (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename        TEXT NOT NULL UNIQUE,
+    content         TEXT NOT NULL,
+    checksum        TEXT NOT NULL,
+    fetched_at      TEXT NOT NULL
 );
 """
 
@@ -412,6 +420,28 @@ class Store:
             avg_cost_per_scan=avg_cost,
         )
 
+    # -- Context cache --
+
+    def upsert_context(self, entry: ContextEntry) -> None:
+        self._conn.execute(
+            """INSERT INTO context_cache (filename, content, checksum, fetched_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(filename) DO UPDATE SET
+                content = excluded.content,
+                checksum = excluded.checksum,
+                fetched_at = excluded.fetched_at""",
+            (entry.filename, entry.content, entry.checksum, _iso(entry.fetched_at)),
+        )
+        self._conn.commit()
+
+    def get_context(self, filename: str) -> ContextEntry | None:
+        row = self._conn.execute(
+            "SELECT * FROM context_cache WHERE filename = ?", (filename,)
+        ).fetchone()
+        if row is None:
+            return None
+        return _row_to_context_entry(row)
+
     def get_stats(self) -> Stats:
         row = self._conn.execute(
             """SELECT
@@ -510,6 +540,21 @@ def _row_to_scan_run(row: sqlite3.Row) -> ScanRun:
         issues_created=row["issues_created"],
         total_cost_usd=row["total_cost_usd"],
         status=row["status"],
+    )
+
+
+def _row_to_context_entry(row: sqlite3.Row) -> ContextEntry:
+    fetched_at = _parse_dt(row["fetched_at"])
+    if fetched_at is None:
+        msg = f"context_cache row {row['id']}: fetched_at is NULL or unparseable"
+        logger.warning(msg)
+        raise ValueError(msg)
+    return ContextEntry(
+        id=row["id"],
+        filename=row["filename"],
+        content=row["content"],
+        checksum=row["checksum"],
+        fetched_at=fetched_at,
     )
 
 

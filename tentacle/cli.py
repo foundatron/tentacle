@@ -127,7 +127,9 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
         monthly_budget=config.monthly_budget,
         get_monthly_cost=lambda: store.get_monthly_cost(now.year, now.month)["total_cost"],
     )
-    context = fetch_context()
+    context_result = fetch_context(store=store)
+    if context_result.changed_files:
+        logger.info("Context files changed since last scan: %s", context_result.changed_files)
     sources = _get_sources(config)
 
     if not sources:
@@ -180,7 +182,7 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
                 analysis = analyze_article(
                     client,
                     article,
-                    context,
+                    context_result.context,
                     model=config.analyze_model,
                     relevance_score=rel_score,
                     relevance_reasoning=rel_reasoning,
