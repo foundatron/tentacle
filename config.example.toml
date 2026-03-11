@@ -14,6 +14,8 @@ backlog_interval = "weekly"
 max_issues_per_cycle = 3
 min_maturity_for_issue = 3
 relevance_threshold = 0.3
+# Maximum LLM cost (USD) for a single scan run. 0.0 means no limit.
+scan_budget = 2.0
 monthly_budget = 10.0
 
 # LLM models
