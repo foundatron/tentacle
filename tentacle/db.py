@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 import sqlite3
 from datetime import UTC, datetime
@@ -310,6 +311,18 @@ class Store:
             "SELECT * FROM scan_runs ORDER BY started_at DESC LIMIT ?", (limit,)
         ).fetchall()
         return [_row_to_scan_run(r) for r in rows]
+
+    def get_monthly_cost(self, year: int, month: int) -> float:
+        """Return total cost of all scan runs started in the given month."""
+        start = datetime(year, month, 1, tzinfo=UTC).isoformat()
+        last_day = calendar.monthrange(year, month)[1]
+        end = datetime(year, month, last_day, 23, 59, 59, 999999, tzinfo=UTC).isoformat()
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(total_cost_usd), 0.0) FROM scan_runs"
+            " WHERE started_at >= ? AND started_at <= ?",
+            (start, end),
+        ).fetchone()
+        return float(row[0])
 
 
 # -- Row converters --

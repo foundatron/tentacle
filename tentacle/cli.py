@@ -14,9 +14,10 @@ from tentacle.db import Store
 from tentacle.decay import apply_decay
 from tentacle.issues import create_issue
 from tentacle.llm.analyze import analyze_article
-from tentacle.llm.client import CostTracker, LLMClient
+from tentacle.llm.client import BudgetExceededError, CostTracker, LLMClient
 from tentacle.llm.filter import filter_article
 from tentacle.sources.arxiv import ArxivAdapter
+from tentacle.sources.base import SourceAdapter
 from tentacle.sources.hackernews import HackerNewsAdapter
 from tentacle.sources.rss import RSSAdapter
 from tentacle.sources.semantic_scholar import SemanticScholarAdapter
@@ -38,9 +39,9 @@ def _get_store(config: Config) -> Store:
     return Store(str(db_path))
 
 
-def _get_sources(config: Config) -> list[tuple[str, list[str], int, object]]:
+def _get_sources(config: Config) -> list[tuple[str, list[str], int, SourceAdapter]]:
     """Return enabled sources as (name, queries, max_results, adapter) tuples."""
-    sources = []
+    sources: list[tuple[str, list[str], int, SourceAdapter]] = []
     if config.arxiv.enabled:
         sources.append(("arxiv", config.arxiv.queries, config.arxiv.max_results, ArxivAdapter()))
     if config.semantic_scholar.enabled:
@@ -75,7 +76,21 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
         logger.error("ANTHROPIC_API_KEY not set")
         sys.exit(1)
 
-    client = LLMClient(config.anthropic_api_key, cost_tracker)
+    now = datetime.now(UTC)
+
+    # NOTE: `now` is captured at scan start. The budget check sums prior completed-run costs
+    # (from the DB) plus the current scan's in-flight cost. This is correct for the expected
+    # single-scan-per-process deployment; concurrent scans could each underestimate combined cost.
+    def monthly_cost_fn() -> float:
+        return store.get_monthly_cost(now.year, now.month)
+
+    client = LLMClient(
+        config.anthropic_api_key,
+        cost_tracker,
+        scan_budget=config.scan_budget,
+        monthly_budget=config.monthly_budget,
+        monthly_cost_fn=monthly_cost_fn,
+    )
     context = fetch_context()
     sources = _get_sources(config)
 
@@ -86,6 +101,7 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
     total_new = 0
     total_relevant = 0
     total_issues = 0
+    budget_hit = False
 
     for source_name, queries, max_results, adapter in sources:
         if not queries:
@@ -163,10 +179,18 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
                 total_cost_usd=cost_tracker.total_cost,
             )
 
+        except BudgetExceededError as exc:
+            logger.warning("Budget exceeded during %s: %s", source_name, exc)
+            store.finish_scan_run(run_id, status="budget_exceeded")
+            budget_hit = True
+            break
+
         except Exception:
             logger.exception("Error scanning %s", source_name)
             store.finish_scan_run(run_id, status="error")
 
+    if budget_hit:
+        logger.warning("Scan stopped early due to budget limit")
     logger.info(
         "Scan complete: %d new articles, %d relevant, %d issues created, $%.4f total cost",
         total_new,
@@ -194,10 +218,27 @@ def cmd_review_backlog(args: argparse.Namespace, config: Config) -> None:
 def cmd_status(args: argparse.Namespace, config: Config) -> None:
     """Show current status."""
     store = _get_store(config)
+    now = datetime.now(UTC)
+
+    # Monthly cost summary
+    monthly_cost = store.get_monthly_cost(now.year, now.month)
+    all_runs = store.get_recent_scan_runs(100)
+    month_runs = [
+        r for r in all_runs if r.started_at.year == now.year and r.started_at.month == now.month
+    ]
+    avg_cost = (monthly_cost / len(month_runs)) if month_runs else 0.0
+    remaining = (
+        max(0.0, config.monthly_budget - monthly_cost) if config.monthly_budget > 0 else None
+    )
+
+    print(f"Monthly cost ({now.year}-{now.month:02d}): ${monthly_cost:.4f}", end="")
+    if remaining is not None:
+        print(f"  remaining=${remaining:.4f} of ${config.monthly_budget:.4f}", end="")
+    print(f"  avg/scan=${avg_cost:.4f} ({len(month_runs)} scans)")
 
     # Recent scan runs
-    runs = store.get_recent_scan_runs(5)
-    print("Recent scans:")
+    runs = all_runs[:5]
+    print("\nRecent scans:")
     for run in runs:
         finished = run.finished_at.strftime("%Y-%m-%d %H:%M") if run.finished_at else "running"
         print(
@@ -211,7 +252,7 @@ def cmd_status(args: argparse.Namespace, config: Config) -> None:
     issues = store.get_open_issues()
     print(f"\nOpen issues: {len(issues)}")
     for issue in issues:
-        age = (datetime.now(UTC) - issue.created_at).days
+        age = (now - issue.created_at).days
         print(
             f"  #{issue.github_number:4d} maturity={issue.current_maturity}/5 "
             f"age={age}d {issue.title[:60]}"

@@ -37,6 +37,8 @@ class Config:
     min_maturity_for_issue: int = 3
     relevance_threshold: float = 0.3
     monthly_budget: float = 10.0
+    # Maximum cost per scan run in USD. Set to 0.0 to disable.
+    scan_budget: float = 2.0
 
     # LLM models
     filter_model: str = "claude-haiku-4-5-20251001"

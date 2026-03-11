@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import anthropic
 
 logger = logging.getLogger(__name__)
+
+
+class BudgetExceededError(Exception):
+    """Raised when a cost budget limit is reached."""
+
 
 # Pricing per million tokens (as of 2025)
 _PRICING: dict[str, tuple[float, float]] = {
@@ -75,9 +81,38 @@ def _estimate_cost(
 class LLMClient:
     """Thin wrapper around the Anthropic SDK with cost tracking."""
 
-    def __init__(self, api_key: str, cost_tracker: CostTracker | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        cost_tracker: CostTracker | None = None,
+        scan_budget: float = 0.0,
+        monthly_budget: float = 0.0,
+        monthly_cost_fn: Callable[[], float] | None = None,
+    ) -> None:
         self._client = anthropic.Anthropic(api_key=api_key)
         self.costs = cost_tracker or CostTracker()
+        self._scan_budget = scan_budget
+        self._monthly_budget = monthly_budget
+        self._monthly_cost_fn = monthly_cost_fn
+
+    def _check_budget(self) -> None:
+        """Raise BudgetExceededError if a budget limit is reached."""
+        if self._scan_budget > 0 and self.costs.total_cost >= self._scan_budget:
+            raise BudgetExceededError(
+                f"Scan budget ${self._scan_budget:.4f} reached (spent ${self.costs.total_cost:.4f})"
+            )
+        if self._monthly_budget > 0 and self._monthly_cost_fn is not None:
+            try:
+                monthly_cost = self._monthly_cost_fn()
+                if monthly_cost + self.costs.total_cost >= self._monthly_budget:
+                    raise BudgetExceededError(
+                        f"Monthly budget ${self._monthly_budget:.4f} reached "
+                        f"(monthly=${monthly_cost:.4f} + scan=${self.costs.total_cost:.4f})"
+                    )
+            except BudgetExceededError:
+                raise
+            except Exception:
+                logger.warning("Failed to check monthly budget, continuing", exc_info=True)
 
     def complete(
         self,
@@ -89,6 +124,7 @@ class LLMClient:
         temperature: float = 0.0,
     ) -> str:
         """Send a completion request and return the text response."""
+        self._check_budget()
         response = self._client.messages.create(
             model=model,
             system=system,

@@ -164,6 +164,35 @@ class TestStore(unittest.TestCase):
         assert runs[0].articles_found == 10
         assert runs[0].status == "complete"
 
+    def test_get_monthly_cost_empty(self) -> None:
+        cost = self.store.get_monthly_cost(2025, 3)
+        assert cost == 0.0
+
+    def test_get_monthly_cost_single_month(self) -> None:
+        # Insert runs directly via SQL to control dates precisely
+        sql = (
+            "INSERT INTO scan_runs (started_at, source, total_cost_usd, status) VALUES (?, ?, ?, ?)"
+        )
+        self.store._conn.execute(sql, ("2025-03-15T10:00:00+00:00", "arxiv", 1.50, "complete"))
+        self.store._conn.execute(sql, ("2025-02-15T10:00:00+00:00", "hn", 0.75, "complete"))
+        self.store._conn.commit()
+
+        mar_cost = self.store.get_monthly_cost(2025, 3)
+        feb_cost = self.store.get_monthly_cost(2025, 2)
+        assert mar_cost == 1.50
+        assert feb_cost == 0.75
+
+    def test_get_monthly_cost_includes_running(self) -> None:
+        # A running scan (no finish_scan_run call) should be counted conservatively
+        sql = (
+            "INSERT INTO scan_runs (started_at, source, total_cost_usd, status) VALUES (?, ?, ?, ?)"
+        )
+        self.store._conn.execute(sql, ("2025-03-10T08:00:00+00:00", "arxiv", 0.30, "running"))
+        self.store._conn.commit()
+
+        cost = self.store.get_monthly_cost(2025, 3)
+        assert cost == 0.30
+
     def test_decay_log(self) -> None:
         self.store.insert_article(_make_article())
         analysis_id = self.store.insert_analysis(_make_analysis())
