@@ -66,6 +66,9 @@ queries = [
     "self-improving software systems",
 ]
 max_results = 50
+# s2_api_key = ""
+# min_citations = 0
+# days_back = 30
 
 [sources.hackernews]
 enabled = true
@@ -106,6 +109,15 @@ class ArxivSourceConfig(SourceConfig):
 
 
 @dataclasses.dataclass
+class SemanticScholarSourceConfig(SourceConfig):
+    """Semantic Scholar-specific source configuration."""
+
+    s2_api_key: str = ""
+    min_citations: int = 0
+    days_back: int | None = None
+
+
+@dataclasses.dataclass
 class Config:
     """Application configuration."""
 
@@ -135,7 +147,9 @@ class Config:
 
     # Sources
     arxiv: ArxivSourceConfig = dataclasses.field(default_factory=ArxivSourceConfig)
-    semantic_scholar: SourceConfig = dataclasses.field(default_factory=SourceConfig)
+    semantic_scholar: SemanticScholarSourceConfig = dataclasses.field(
+        default_factory=SemanticScholarSourceConfig
+    )
     hackernews: SourceConfig = dataclasses.field(default_factory=SourceConfig)
     rss: SourceConfig = dataclasses.field(default_factory=SourceConfig)
 
@@ -207,6 +221,17 @@ def validate(config: Config) -> None:
             f"got {config.arxiv.sort_order!r}"
         )
 
+    if config.semantic_scholar.min_citations < 0:
+        raise ConfigError(
+            f"sources.semantic_scholar.min_citations must be >= 0, "
+            f"got {config.semantic_scholar.min_citations}"
+        )
+    if config.semantic_scholar.days_back is not None and config.semantic_scholar.days_back < 1:
+        raise ConfigError(
+            f"sources.semantic_scholar.days_back must be >= 1, "
+            f"got {config.semantic_scholar.days_back}"
+        )
+
 
 def load_config(path: Path | None = None) -> Config:
     """Load configuration from TOML file, with env var overrides."""
@@ -221,6 +246,8 @@ def load_config(path: Path | None = None) -> Config:
     # Env var overrides
     if api_key := os.environ.get("ANTHROPIC_API_KEY"):
         config.anthropic_api_key = api_key
+    if s2_key := os.environ.get("S2_API_KEY"):
+        config.semantic_scholar.s2_api_key = s2_key
 
     validate(config)
     return config

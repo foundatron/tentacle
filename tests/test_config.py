@@ -110,6 +110,25 @@ class TestValidate(unittest.TestCase):
         config.arxiv.sort_order = "descending"
         validate(config)  # should not raise
 
+    def test_semantic_scholar_config_validation(self) -> None:
+        config = self._valid()
+        config.semantic_scholar.min_citations = -1
+        with self.assertRaises(ConfigError):
+            validate(config)
+
+        config = self._valid()
+        config.semantic_scholar.days_back = 0
+        with self.assertRaises(ConfigError):
+            validate(config)
+
+        config = self._valid()
+        config.semantic_scholar.days_back = 1
+        validate(config)  # should not raise
+
+        config = self._valid()
+        config.semantic_scholar.days_back = None
+        validate(config)  # should not raise
+
 
 class TestLoadFromToml(unittest.TestCase):
     def test_load_from_toml(self) -> None:
@@ -140,6 +159,19 @@ relevance_threshold = 0.7
             with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "from-env"}):
                 config = load_config(tmp_path)
                 self.assertEqual(config.anthropic_api_key, "from-env")
+        finally:
+            tmp_path.unlink()
+
+    def test_s2_api_key_env_override(self) -> None:
+        toml_content = b'anthropic_api_key = "key"\n'
+        with tempfile.NamedTemporaryFile(suffix=".toml", delete=False) as f:
+            f.write(toml_content)
+            tmp_path = Path(f.name)
+
+        try:
+            with patch.dict(os.environ, {"S2_API_KEY": "s2-secret"}):
+                config = load_config(tmp_path)
+                self.assertEqual(config.semantic_scholar.s2_api_key, "s2-secret")
         finally:
             tmp_path.unlink()
 

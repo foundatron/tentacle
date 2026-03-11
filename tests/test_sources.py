@@ -54,7 +54,8 @@ S2_RESPONSE = b"""\
       "abstract": "A study on using LLMs for testing.",
       "publicationDate": "2024-02-01",
       "externalIds": {"CorpusId": "999"},
-      "openAccessPdf": {"url": "https://example.com/paper.pdf"}
+      "openAccessPdf": {"url": "https://example.com/paper.pdf"},
+      "citationCount": 5
     }
   ]
 }"""
@@ -262,6 +263,18 @@ class TestHackerNewsAdapter(unittest.TestCase):
         assert a.source_id == "12345"
 
 
+def _make_429_error(retry_after: str | None = "1") -> urllib.error.HTTPError:
+    headers = MagicMock()
+    headers.get.return_value = retry_after
+    return urllib.error.HTTPError(
+        url="http://x",
+        code=429,
+        msg="Too Many Requests",
+        hdrs=headers,
+        fp=None,  # type: ignore[arg-type]
+    )
+
+
 class TestSemanticScholarAdapter(unittest.TestCase):
     @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
     def test_fetch_parses_papers(self, mock_urlopen_fn: MagicMock) -> None:
@@ -276,6 +289,193 @@ class TestSemanticScholarAdapter(unittest.TestCase):
         assert a.authors == ["Dr. Test"]
         assert a.pdf_url == "https://example.com/paper.pdf"
         assert a.access_status == "open"
+
+    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    def test_api_key_header(self, mock_urlopen_fn: MagicMock) -> None:
+        mock_urlopen_fn.return_value = _mock_urlopen(S2_RESPONSE)
+        adapter = SemanticScholarAdapter(api_key="test-key")
+        adapter.fetch(["query"], max_results=10)
+
+        req = mock_urlopen_fn.call_args[0][0]
+        assert req.get_header("X-api-key") == "test-key"
+
+    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    def test_no_api_key_header(self, mock_urlopen_fn: MagicMock) -> None:
+        mock_urlopen_fn.return_value = _mock_urlopen(S2_RESPONSE)
+        adapter = SemanticScholarAdapter()
+        adapter.fetch(["query"], max_results=10)
+
+        req = mock_urlopen_fn.call_args[0][0]
+        assert req.get_header("X-api-key") is None
+
+    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    def test_min_citations_filter(self, mock_urlopen_fn: MagicMock) -> None:
+        response = b"""\
+{
+  "data": [
+    {
+      "title": "High Citations Paper",
+      "url": "https://s2.example.com/paper/high",
+      "authors": [],
+      "abstract": "Abstract.",
+      "publicationDate": "2024-01-01",
+      "externalIds": {},
+      "openAccessPdf": null,
+      "citationCount": 20
+    },
+    {
+      "title": "Low Citations Paper",
+      "url": "https://s2.example.com/paper/low",
+      "authors": [],
+      "abstract": "Abstract.",
+      "publicationDate": "2024-01-01",
+      "externalIds": {},
+      "openAccessPdf": null,
+      "citationCount": 3
+    }
+  ]
+}"""
+        mock_urlopen_fn.return_value = _mock_urlopen(response)
+        adapter = SemanticScholarAdapter(min_citations=10)
+        articles = adapter.fetch(["query"], max_results=10)
+
+        assert len(articles) == 1
+        assert articles[0].title == "High Citations Paper"
+
+    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    def test_min_citations_null_treated_as_zero(self, mock_urlopen_fn: MagicMock) -> None:
+        response = b"""\
+{
+  "data": [
+    {
+      "title": "No Citation Count Paper",
+      "url": "https://s2.example.com/paper/nocite",
+      "authors": [],
+      "abstract": "Abstract.",
+      "publicationDate": "2024-01-01",
+      "externalIds": {},
+      "openAccessPdf": null,
+      "citationCount": null
+    }
+  ]
+}"""
+        mock_urlopen_fn.return_value = _mock_urlopen(response)
+        adapter = SemanticScholarAdapter(min_citations=1)
+        articles = adapter.fetch(["query"], max_results=10)
+
+        assert articles == []
+
+    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    def test_empty_results(self, mock_urlopen_fn: MagicMock) -> None:
+        mock_urlopen_fn.return_value = _mock_urlopen(b'{"data": []}')
+        adapter = SemanticScholarAdapter()
+        articles = adapter.fetch(["query"], max_results=10)
+        assert articles == []
+
+    @patch("tentacle.sources.semantic_scholar.time.sleep")
+    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    def test_retry_on_429(self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock) -> None:
+        mock_urlopen_fn.side_effect = [
+            _make_429_error("1"),
+            _mock_urlopen(S2_RESPONSE),
+        ]
+        adapter = SemanticScholarAdapter()
+        with self.assertLogs("tentacle.sources.semantic_scholar", level="WARNING"):
+            articles = adapter.fetch(["query"], max_results=10)
+
+        assert len(articles) == 1
+        mock_sleep.assert_called_once_with(1)
+
+    @patch("tentacle.sources.semantic_scholar.time.sleep")
+    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    def test_retry_429_exhausted(self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock) -> None:
+        mock_urlopen_fn.side_effect = _make_429_error("1")
+        adapter = SemanticScholarAdapter()
+        with self.assertLogs("tentacle.sources.semantic_scholar", level="ERROR"):
+            articles = adapter.fetch(["query"], max_results=10)
+
+        assert articles == []
+        assert mock_sleep.call_count == 3  # 3 retries before exhaustion
+
+    @patch("tentacle.sources.semantic_scholar.datetime")
+    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    def test_date_range_filter(self, mock_urlopen_fn: MagicMock, mock_datetime: MagicMock) -> None:
+        mock_urlopen_fn.return_value = _mock_urlopen(b'{"data": []}')
+        fixed_now = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
+        mock_datetime.now.return_value = fixed_now
+
+        adapter = SemanticScholarAdapter(days_back=7)
+        adapter.fetch(["query"], max_results=10)
+
+        url = mock_urlopen_fn.call_args[0][0].full_url
+        parsed = urllib.parse.urlparse(url)
+        params = urllib.parse.parse_qs(parsed.query)
+        date_param = params["publicationDateOrYear"][0]
+
+        start_date = fixed_now - timedelta(days=7)
+        expected = f"{start_date.strftime('%Y-%m-%d')}:{fixed_now.strftime('%Y-%m-%d')}"
+        assert date_param == expected
+
+    @patch("tentacle.sources.semantic_scholar.time.sleep")
+    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    def test_retry_after_non_integer_falls_back_to_one_second(
+        self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """Non-integer Retry-After header should fall back to 1s and log at DEBUG."""
+        mock_urlopen_fn.side_effect = [
+            _make_429_error("Thu, 01 Dec 1994 16:00:00 GMT"),
+            _mock_urlopen(S2_RESPONSE),
+        ]
+        adapter = SemanticScholarAdapter()
+        with self.assertLogs("tentacle.sources.semantic_scholar", level="DEBUG") as log:
+            articles = adapter.fetch(["query"], max_results=10)
+
+        assert len(articles) == 1
+        mock_sleep.assert_called_once_with(1)  # fell back to 1s
+        assert any("not an integer" in m for m in log.output)
+
+    @patch("tentacle.sources.semantic_scholar.time.sleep")
+    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    def test_retry_after_absent_falls_back_to_one_second(
+        self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """Absent Retry-After header should default to 1s sleep."""
+        mock_urlopen_fn.side_effect = [
+            _make_429_error(None),
+            _mock_urlopen(S2_RESPONSE),
+        ]
+        adapter = SemanticScholarAdapter()
+        with self.assertLogs("tentacle.sources.semantic_scholar", level="WARNING"):
+            articles = adapter.fetch(["query"], max_results=10)
+
+        assert len(articles) == 1
+        mock_sleep.assert_called_once_with(1)
+
+    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    def test_url_error_returns_empty(self, mock_urlopen_fn: MagicMock) -> None:
+        """URLError (e.g. DNS failure, timeout) should log and return no articles."""
+        import urllib.error as _ue
+
+        mock_urlopen_fn.side_effect = _ue.URLError("Name or service not known")
+        adapter = SemanticScholarAdapter()
+        with self.assertLogs("tentacle.sources.semantic_scholar", level="ERROR") as log:
+            articles = adapter.fetch(["query"], max_results=10)
+
+        assert articles == []
+        assert any("network error" in m for m in log.output)
+
+    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    def test_non_retryable_error_skips_query(self, mock_urlopen_fn: MagicMock) -> None:
+        mock_urlopen_fn.side_effect = [
+            _make_http_error(500),
+            _mock_urlopen(S2_RESPONSE),
+        ]
+        adapter = SemanticScholarAdapter()
+        with self.assertLogs("tentacle.sources.semantic_scholar", level="ERROR"):
+            articles = adapter.fetch(["query1", "query2"], max_results=20)
+
+        assert len(articles) == 1
+        assert mock_urlopen_fn.call_count == 2
 
 
 class TestRSSAdapter(unittest.TestCase):
