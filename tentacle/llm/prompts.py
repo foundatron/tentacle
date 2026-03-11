@@ -116,10 +116,21 @@ You are evaluating whether a previously created GitHub issue for OctopusGarden i
 relevant given the current state of the codebase.
 
 The issue was created from a research finding. Time has passed and the codebase may have \
-evolved. Determine if the issue is still actionable and relevant.
+evolved. Determine the appropriate action for this issue.
+
+Choose one of three actions:
+- "halt": The issue is still relevant and actionable — skip this decay cycle.
+- "decay": Proceed with normal maturity reduction (-1). The idea has some remaining value \
+but is losing urgency.
+- "accelerate": The issue is no longer relevant, superseded, or already addressed — \
+drop maturity to 1 immediately and close the issue.
+
+The optional "comment" field will be posted to the GitHub issue if non-empty. Use it to \
+explain a halt (e.g. "Still relevant: ...") or an accelerate (e.g. "Closing: ...").
 
 Respond with ONLY a JSON object:
-{"still_relevant": true|false, "reasoning": "explanation"}"""
+{"action": "halt"|"decay"|"accelerate", "reasoning": "explanation", \
+"comment": "github comment to post, or empty string if no comment is needed"}"""
 
 DECAY_CHECK_USER = """\
 ## Issue

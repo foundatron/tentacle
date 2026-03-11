@@ -13,6 +13,8 @@ from tentacle.issues import (
     _sanitize_search_query,
     _title_similarity,
     check_duplicate,
+    close_issue,
+    comment_on_issue,
     create_issue,
 )
 from tentacle.models import Analysis, Article
@@ -230,6 +232,70 @@ class TestIssueCreation(unittest.TestCase):
         body = _format_body(_make_article(), analysis)
         # Should not duplicate Source section
         assert body.count("## Source") == 1
+
+
+class TestCommentOnIssue(unittest.TestCase):
+    @patch("tentacle.issues.subprocess.run")
+    def test_comment_success(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+
+        result = comment_on_issue(7, "Great finding!", repo="org/repo")
+
+        assert result is True
+        args = mock_run.call_args[0][0]
+        assert args[0] == "gh"
+        assert "comment" in args
+        assert str(7) in args
+        assert "--body" in args
+        assert "Great finding!" in args
+        assert "--repo" in args
+        assert "org/repo" in args
+
+    @patch("tentacle.issues.subprocess.run")
+    def test_comment_dry_run(self, mock_run: MagicMock) -> None:
+        result = comment_on_issue(7, "Test", repo="org/repo", dry_run=True)
+        assert result is True
+        mock_run.assert_not_called()
+
+    @patch("tentacle.issues.subprocess.run")
+    def test_comment_gh_failure(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=1, stderr="auth error", stdout="")
+
+        result = comment_on_issue(7, "Test", repo="org/repo")
+
+        assert result is False
+
+
+class TestCloseIssue(unittest.TestCase):
+    @patch("tentacle.issues.subprocess.run")
+    def test_close_success(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+
+        result = close_issue(42, "Closing now.", repo="org/repo")
+
+        assert result is True
+        args = mock_run.call_args[0][0]
+        assert args[0] == "gh"
+        assert "close" in args
+        assert str(42) in args
+        assert "--comment" in args
+        assert "Closing now." in args
+        assert "--repo" in args
+        assert "org/repo" in args
+
+    @patch("tentacle.issues.subprocess.run")
+    def test_close_dry_run(self, mock_run: MagicMock) -> None:
+        result = close_issue(42, "Closing.", repo="org/repo", dry_run=True)
+        assert result is True
+        mock_run.assert_not_called()
+
+    @patch("tentacle.issues.subprocess.run")
+    def test_close_gh_failure(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = MagicMock(returncode=1, stderr="not found", stdout="")
+
+        result = close_issue(42, "Closing.", repo="org/repo")
+
+        assert result is False
 
 
 if __name__ == "__main__":

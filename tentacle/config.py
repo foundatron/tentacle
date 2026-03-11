@@ -39,6 +39,7 @@ monthly_budget = 10.0
 # LLM models
 filter_model = "claude-haiku-4-5"
 analyze_model = "claude-sonnet-4-6"
+decay_model = "claude-haiku-4-5"
 
 # Database
 db_path = "~/.local/share/tentacle/tentacle.db"
@@ -162,6 +163,7 @@ class Config:
     # LLM models
     filter_model: str = "claude-haiku-4-5"
     analyze_model: str = "claude-sonnet-4-6"
+    decay_model: str = "claude-haiku-4-5"
 
     # Database
     db_path: str = "~/.local/share/tentacle/tentacle.db"

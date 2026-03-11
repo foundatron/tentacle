@@ -256,6 +256,12 @@ class Store:
             return None
         return _row_to_analysis(row)
 
+    def get_analysis_by_id(self, analysis_id: int) -> Analysis | None:
+        row = self._conn.execute("SELECT * FROM analyses WHERE id = ?", (analysis_id,)).fetchone()
+        if row is None:
+            return None
+        return _row_to_analysis(row)
+
     def get_issueable_analyses(self, min_maturity: int) -> list[Analysis]:
         """Get analyses with sufficient maturity that don't have issues yet."""
         rows = self._conn.execute(
