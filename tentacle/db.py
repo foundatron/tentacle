@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS analyses (
     suggested_body  TEXT,
     maturity_score  INTEGER NOT NULL,
     maturity_reasoning TEXT,
+    confidence_score REAL,
     model_used      TEXT NOT NULL,
     input_tokens    INTEGER,
     output_tokens   INTEGER,
@@ -130,6 +131,13 @@ class Store:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA)
+        # Migration: add confidence_score column for existing DBs (safe to ignore if exists).
+        try:
+            self._conn.execute("ALTER TABLE analyses ADD COLUMN confidence_score REAL")
+            self._conn.commit()
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
 
     def close(self) -> None:
         self._conn.close()
@@ -193,9 +201,9 @@ class Store:
             """INSERT INTO analyses
             (article_id, relevance_score, relevance_reasoning, key_insights,
              applicable_scopes, suggested_type, suggested_title, suggested_body,
-             maturity_score, maturity_reasoning, model_used, input_tokens,
-             output_tokens, cost_usd, analyzed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             maturity_score, maturity_reasoning, confidence_score, model_used,
+             input_tokens, output_tokens, cost_usd, analyzed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 analysis.article_id,
                 analysis.relevance_score,
@@ -211,6 +219,7 @@ class Store:
                 analysis.suggested_body,
                 analysis.maturity_score,
                 analysis.maturity_reasoning,
+                analysis.confidence_score,
                 analysis.model_used,
                 analysis.input_tokens,
                 analysis.output_tokens,
@@ -449,6 +458,7 @@ def _row_to_analysis(row: sqlite3.Row) -> Analysis:
         suggested_body=row["suggested_body"],
         maturity_score=row["maturity_score"],
         maturity_reasoning=row["maturity_reasoning"],
+        confidence_score=row["confidence_score"],
         model_used=row["model_used"],
         input_tokens=row["input_tokens"],
         output_tokens=row["output_tokens"],

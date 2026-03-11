@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-from tentacle.llm.analyze import analyze_article
+from tentacle.llm.analyze import ANALYSIS_TOOL, analyze_article
 from tentacle.llm.client import CostTracker, LLMClient, UsageRecord
 from tentacle.models import Article
 
@@ -25,20 +24,19 @@ def _make_article() -> Article:
     )
 
 
-_ANALYSIS_RESPONSE = json.dumps(
-    {
-        "key_insights": ["Adaptive temperature scheduling improves convergence"],
-        "applicable_scopes": ["attractor"],
-        "suggested_type": "feat",
-        "suggested_title": "feat(attractor): implement adaptive temperature scheduling",
-        "suggested_body": (
-            "## Problem Statement\nConvergence can stall.\n\n"
-            "## Proposed Change\nAdd temperature scheduling."
-        ),
-        "maturity_score": 4,
-        "maturity_reasoning": "Clear implementation path",
-    }
-)
+_ANALYSIS_DATA: dict[str, object] = {
+    "key_insights": ["Adaptive temperature scheduling improves convergence"],
+    "applicable_scopes": ["attractor"],
+    "suggested_type": "feat",
+    "suggested_title": "feat(attractor): implement adaptive temperature scheduling",
+    "suggested_body": (
+        "## Problem Statement\nConvergence can stall.\n\n"
+        "## Proposed Change\nAdd temperature scheduling."
+    ),
+    "maturity_score": 4,
+    "maturity_reasoning": "Clear implementation path",
+    "confidence_score": 0.9,
+}
 
 
 class TestAnalyze(unittest.TestCase):
@@ -54,7 +52,7 @@ class TestAnalyze(unittest.TestCase):
         )
 
         client = MagicMock(spec=LLMClient)
-        client.complete.return_value = _ANALYSIS_RESPONSE
+        client.complete_with_tools.return_value = _ANALYSIS_DATA
         client.costs = cost_tracker
 
         result = analyze_article(
@@ -71,10 +69,11 @@ class TestAnalyze(unittest.TestCase):
         assert result.suggested_type == "feat"
         assert result.applicable_scopes == ["attractor"]
         assert result.relevance_score == 0.85
+        assert result.confidence_score == 0.9
 
-    def test_invalid_json_returns_none(self) -> None:
+    def test_tool_use_error_returns_none(self) -> None:
         client = MagicMock(spec=LLMClient)
-        client.complete.return_value = "not json"
+        client.complete_with_tools.side_effect = ValueError("No tool_use block in response")
         client.costs = CostTracker()
 
         result = analyze_article(
@@ -86,6 +85,52 @@ class TestAnalyze(unittest.TestCase):
             relevance_reasoning="test",
         )
         assert result is None
+
+    def test_tool_use_schema_matches_analysis_fields(self) -> None:
+        """ANALYSIS_TOOL schema must cover the expected Analysis output fields."""
+        expected_fields = {
+            "key_insights",
+            "applicable_scopes",
+            "suggested_type",
+            "suggested_title",
+            "suggested_body",
+            "maturity_score",
+            "maturity_reasoning",
+            "confidence_score",
+        }
+        schema_props = set(ANALYSIS_TOOL["input_schema"]["properties"].keys())  # type: ignore[index]
+        assert expected_fields == schema_props
+
+    def test_missing_confidence_score_returns_none_for_field(self) -> None:
+        """analyze_article handles a response missing the optional confidence_score."""
+        data_without_confidence = {
+            k: v for k, v in _ANALYSIS_DATA.items() if k != "confidence_score"
+        }
+        cost_tracker = CostTracker()
+        cost_tracker.add(
+            UsageRecord(
+                model="claude-sonnet-4-5-20250514",
+                input_tokens=500,
+                output_tokens=300,
+                cost_usd=0.01,
+            )
+        )
+
+        client = MagicMock(spec=LLMClient)
+        client.complete_with_tools.return_value = data_without_confidence
+        client.costs = cost_tracker
+
+        result = analyze_article(
+            client,
+            _make_article(),
+            "context",
+            model="claude-sonnet-4-5-20250514",
+            relevance_score=0.8,
+            relevance_reasoning="test",
+        )
+
+        assert result is not None
+        assert result.confidence_score is None
 
     def test_uses_prompt_caching(self) -> None:
         cost_tracker = CostTracker()
@@ -99,7 +144,7 @@ class TestAnalyze(unittest.TestCase):
         )
 
         client = MagicMock(spec=LLMClient)
-        client.complete.return_value = _ANALYSIS_RESPONSE
+        client.complete_with_tools.return_value = _ANALYSIS_DATA
         client.costs = cost_tracker
 
         analyze_article(
@@ -111,7 +156,7 @@ class TestAnalyze(unittest.TestCase):
             relevance_reasoning="test",
         )
 
-        call_args = client.complete.call_args
+        call_args = client.complete_with_tools.call_args
         system = call_args.kwargs["system"]
         # Should be a list with cache_control
         assert isinstance(system, list)

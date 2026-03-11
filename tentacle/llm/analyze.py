@@ -2,15 +2,93 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, TypedDict
 
-from tentacle.llm.client import LLMClient
+if TYPE_CHECKING:
+    import anthropic
+
+from tentacle.llm.client import BudgetExceededError, LLMClient
 from tentacle.llm.prompts import ANALYZE_SYSTEM, ANALYZE_USER
 from tentacle.models import Analysis, Article
 
 logger = logging.getLogger(__name__)
+
+
+class _AnalysisToolOutput(TypedDict, total=False):
+    """Typed representation of the create_analysis tool output."""
+
+    key_insights: list[str]
+    applicable_scopes: list[str]
+    suggested_type: str
+    suggested_title: str
+    suggested_body: str
+    maturity_score: int
+    maturity_reasoning: str
+    confidence_score: float
+
+
+ANALYSIS_TOOL: anthropic.types.ToolParam = {
+    "name": "create_analysis",
+    "description": (
+        "Record the structured analysis of a research article for OctopusGarden, "
+        "including key insights, a draft GitHub issue, maturity score, and confidence."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "key_insights": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Key insights from the article relevant to OctopusGarden.",
+            },
+            "applicable_scopes": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "OctopusGarden scopes this applies to (e.g. attractor, llm).",
+            },
+            "suggested_type": {
+                "type": "string",
+                "description": "Conventional commit type: feat, fix, perf, or refactor.",
+            },
+            "suggested_title": {
+                "type": "string",
+                "description": "Issue title in conventional commits format.",
+            },
+            "suggested_body": {
+                "type": "string",
+                "description": "Full GitHub issue body in markdown using the provided template.",
+            },
+            "maturity_score": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "description": "Implementation maturity score 1-5.",
+            },
+            "maturity_reasoning": {
+                "type": "string",
+                "description": "Explanation of the maturity rating.",
+            },
+            "confidence_score": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "description": "Confidence in this analysis (0.0-1.0).",
+            },
+        },
+        "required": [
+            "key_insights",
+            "applicable_scopes",
+            "suggested_type",
+            "suggested_title",
+            "suggested_body",
+            "maturity_score",
+            "maturity_reasoning",
+            "confidence_score",
+        ],
+    },
+}
 
 
 def analyze_article(
@@ -45,19 +123,23 @@ def analyze_article(
         }
     ]
 
-    response = client.complete(
-        model=model,
-        system=system_blocks,  # type: ignore[arg-type]
-        messages=[{"role": "user", "content": user_msg}],
-        max_tokens=4096,
-        temperature=0.0,
-    )
-
     try:
-        data = json.loads(response)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse analysis response for '%s'", article.title[:60])
+        raw = client.complete_with_tools(
+            model=model,
+            system=system_blocks,  # type: ignore[arg-type]
+            messages=[{"role": "user", "content": user_msg}],
+            tools=[ANALYSIS_TOOL],
+            tool_choice={"type": "tool", "name": "create_analysis"},
+            max_tokens=4096,
+            temperature=0.0,
+        )
+    except BudgetExceededError:
+        raise
+    except Exception:
+        logger.warning("Failed to analyze article '%s'", article.title[:60])
         return None
+
+    data: _AnalysisToolOutput = raw  # type: ignore[assignment]
 
     # Get the last usage record for token counts
     last_record = client.costs.records[-1] if client.costs.records else None
@@ -73,6 +155,7 @@ def analyze_article(
         suggested_body=data.get("suggested_body"),
         maturity_score=int(data.get("maturity_score", 1)),
         maturity_reasoning=data.get("maturity_reasoning"),
+        confidence_score=float(data["confidence_score"]) if "confidence_score" in data else None,
         model_used=model,
         input_tokens=last_record.input_tokens if last_record else None,
         output_tokens=last_record.output_tokens if last_record else None,

@@ -117,24 +117,13 @@ class LLMClient:
         # Fetched once on first use to avoid a SQL round-trip per LLM call.
         self._monthly_base_cost: float | None = None
 
-    def complete(
-        self,
-        *,
-        model: str,
-        system: str | list[anthropic.types.TextBlockParam],
-        messages: list[anthropic.types.MessageParam],
-        max_tokens: int = 4096,
-        temperature: float = 0.0,
-    ) -> str:
-        """Send a completion request and return the text response."""
+    def _check_budgets(self) -> None:
+        """Check scan and monthly budgets before an API call."""
         if self._scan_budget > 0 and self.costs.total_cost >= self._scan_budget:
             raise BudgetExceededError(self.costs.total_cost, self._scan_budget, "scan")
 
         if self._monthly_budget > 0 and self._get_monthly_cost is not None:
             try:
-                # Fetch the pre-scan monthly base cost once and cache it.
-                # It only changes if another process updates the DB concurrently,
-                # which is extremely unlikely for a single daily cron job.
                 if self._monthly_base_cost is None:
                     self._monthly_base_cost = self._get_monthly_cost()
                 total_monthly = self._monthly_base_cost + self.costs.total_cost
@@ -147,21 +136,13 @@ class LLMClient:
                     "Failed to check monthly cost; proceeding without monthly budget enforcement"
                 )
 
-        response = self._client.messages.create(
-            model=model,
-            system=system,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+    def _check_scan_budget_post_call(self) -> None:
+        """Post-call scan budget check: catches overshoot from a single expensive call."""
+        if self._scan_budget > 0 and self.costs.total_cost >= self._scan_budget:
+            raise BudgetExceededError(self.costs.total_cost, self._scan_budget, "scan")
 
-        # Extract text
-        text = ""
-        for block in response.content:
-            if block.type == "text":
-                text += block.text
-
-        # Track usage
+    def _record_usage(self, model: str, response: anthropic.types.Message) -> UsageRecord:
+        """Build a UsageRecord from a response, add it to costs, and log it."""
         usage = response.usage
         cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
         cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
@@ -187,9 +168,72 @@ class LLMClient:
             cache_read,
             record.cost_usd,
         )
+        return record
 
-        # Post-call scan budget check: catches overshoot from a single expensive call.
-        if self._scan_budget > 0 and self.costs.total_cost >= self._scan_budget:
-            raise BudgetExceededError(self.costs.total_cost, self._scan_budget, "scan")
+    def complete(
+        self,
+        *,
+        model: str,
+        system: str | list[anthropic.types.TextBlockParam],
+        messages: list[anthropic.types.MessageParam],
+        max_tokens: int = 4096,
+        temperature: float = 0.0,
+    ) -> str:
+        """Send a completion request and return the text response."""
+        self._check_budgets()
+
+        response = self._client.messages.create(
+            model=model,
+            system=system,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        # Extract text
+        text = ""
+        for block in response.content:
+            if block.type == "text":
+                text += block.text
+
+        self._record_usage(model, response)
+        self._check_scan_budget_post_call()
 
         return text
+
+    def complete_with_tools(
+        self,
+        *,
+        model: str,
+        system: str | list[anthropic.types.TextBlockParam],
+        messages: list[anthropic.types.MessageParam],
+        tools: list[anthropic.types.ToolParam],
+        tool_choice: anthropic.types.ToolChoiceToolParam,
+        max_tokens: int = 4096,
+        temperature: float = 0.0,
+    ) -> dict[str, object]:
+        """Send a completion request forcing a tool call and return the tool input dict."""
+        self._check_budgets()
+
+        response = self._client.messages.create(
+            model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        self._record_usage(model, response)
+        self._check_scan_budget_post_call()
+
+        for block in response.content:
+            if block.type == "tool_use":
+                if not isinstance(block.input, dict):
+                    raise TypeError(
+                        f"Expected dict from tool_use block.input, got {type(block.input)}"
+                    )
+                return block.input
+
+        raise ValueError("No tool_use block in response")

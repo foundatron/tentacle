@@ -48,17 +48,6 @@ Your job is to:
 The issue must be self-contained and actionable enough for an automated system (autoissue.py) \
 to implement without human intervention. Reference specific OctopusGarden packages and files.
 
-Respond with ONLY a JSON object:
-{{
-    "key_insights": ["insight1", "insight2", ...],
-    "applicable_scopes": ["attractor", "llm", ...],
-    "suggested_type": "feat|fix|perf|refactor",
-    "suggested_title": "type(scope): description in conventional commits format",
-    "suggested_body": "full issue body in markdown (see template below)",
-    "maturity_score": N,
-    "maturity_reasoning": "explanation of maturity rating"
-}}
-
 Issue body template:
 ## Problem Statement
 [What the paper/article found and why it matters for octopusgarden]
