@@ -225,7 +225,7 @@ class TestCmdDaemon(unittest.TestCase):
             cmd_daemon(args, config)
 
         # cmd_daemon builds sub_args = Namespace(dry_run=args.dry_run) before the loop
-        expected_sub_args = Namespace(dry_run=False)
+        expected_sub_args = Namespace(dry_run=False, days_back=None)
         mock_run.assert_called_once_with(expected_sub_args, config)
         mock_backlog.assert_called_once_with(expected_sub_args, config)
 

@@ -51,8 +51,16 @@ def _get_store(config: Config) -> Store:
     return Store(str(db_path))
 
 
-def _get_sources(config: Config) -> list[tuple[str, list[str], int, SourceAdapter]]:
-    """Return enabled sources as (name, queries, max_results, adapter) tuples."""
+def _get_sources(
+    config: Config,
+    *,
+    days_back_override: int | None = None,
+) -> list[tuple[str, list[str], int, SourceAdapter]]:
+    """Return enabled sources as (name, queries, max_results, adapter) tuples.
+
+    When *days_back_override* is set it takes precedence over per-source
+    config values, letting the CLI do a one-off wider scan.
+    """
     sources: list[tuple[str, list[str], int, SourceAdapter]] = []
     if config.arxiv.enabled:
         sources.append(
@@ -61,7 +69,7 @@ def _get_sources(config: Config) -> list[tuple[str, list[str], int, SourceAdapte
                 config.arxiv.queries,
                 config.arxiv.max_results,
                 ArxivAdapter(
-                    days_back=config.arxiv.days_back,
+                    days_back=days_back_override or config.arxiv.days_back,
                     sort_order=config.arxiv.sort_order,
                 ),
             )
@@ -75,7 +83,7 @@ def _get_sources(config: Config) -> list[tuple[str, list[str], int, SourceAdapte
                 SemanticScholarAdapter(
                     api_key=config.semantic_scholar.s2_api_key,
                     min_citations=config.semantic_scholar.min_citations,
-                    days_back=config.semantic_scholar.days_back,
+                    days_back=days_back_override or config.semantic_scholar.days_back,
                 ),
             )
         )
@@ -87,7 +95,7 @@ def _get_sources(config: Config) -> list[tuple[str, list[str], int, SourceAdapte
                 config.hackernews.max_results,
                 HackerNewsAdapter(
                     min_points=config.hackernews.min_points,
-                    days_back=config.hackernews.days_back,
+                    days_back=days_back_override or config.hackernews.days_back,
                     story_type=config.hackernews.story_type,
                 ),
             )
@@ -140,7 +148,10 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
     context_result = fetch_context(store=store)
     if context_result.changed_files:
         logger.info("Context files changed since last scan: %s", context_result.changed_files)
-    sources = _get_sources(config)
+    sources = _get_sources(
+        config,
+        days_back_override=getattr(args, "days_back", None),
+    )
 
     if not sources:
         logger.warning("No sources enabled")
@@ -156,7 +167,9 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
             continue
 
         cost_before = cost_tracker.total_cost
-        run_id = store.start_scan_run(source_name)
+        run_id: int | None = None
+        if not args.dry_run:
+            run_id = store.start_scan_run(source_name)
         logger.info("Scanning %s...", source_name)
 
         try:
@@ -165,8 +178,11 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
 
             # Dedup
             new_articles = [a for a in articles if not store.article_exists(a.id)]
-            for a in new_articles:
-                store.insert_article(a)
+            if not args.dry_run:
+                for a in new_articles:
+                    store.insert_article(a)
+            else:
+                logger.info("DRY RUN: would insert %d new articles", len(new_articles))
             articles_new = len(new_articles)
             total_new += articles_new
 
@@ -200,8 +216,15 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
                 if analysis is None:
                     continue
 
-                analysis_id = store.insert_analysis(analysis)
-                analysis.id = analysis_id
+                if not args.dry_run:
+                    analysis_id = store.insert_analysis(analysis)
+                    analysis.id = analysis_id
+                else:
+                    logger.info(
+                        "DRY RUN: would insert analysis for '%s' (maturity=%d)",
+                        article.title[:60],
+                        analysis.maturity_score,
+                    )
 
                 if (
                     analysis.maturity_score >= config.min_maturity_for_issue
@@ -220,7 +243,8 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
                         dry_run=args.dry_run,
                     )
                     if issue:
-                        store.insert_issue(issue)
+                        if not args.dry_run:
+                            store.insert_issue(issue)
                         issues_created += 1
                         total_issues += 1
                         if total_issues < config.max_issues_per_cycle:
@@ -232,23 +256,37 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
                             time.sleep(delay)
 
             source_cost = cost_tracker.total_cost - cost_before
-            store.finish_scan_run(
-                run_id,
-                articles_found=articles_found,
-                articles_new=articles_new,
-                articles_relevant=articles_relevant,
-                issues_created=issues_created,
-                total_cost_usd=source_cost,
-            )
+            if not args.dry_run and run_id is not None:
+                store.finish_scan_run(
+                    run_id,
+                    articles_found=articles_found,
+                    articles_new=articles_new,
+                    articles_relevant=articles_relevant,
+                    issues_created=issues_created,
+                    total_cost_usd=source_cost,
+                )
+            else:
+                logger.info(
+                    "DRY RUN: scan %s complete "
+                    "(found=%d, new=%d, relevant=%d, issues=%d, cost=$%.4f)",
+                    source_name,
+                    articles_found,
+                    articles_new,
+                    articles_relevant,
+                    issues_created,
+                    source_cost,
+                )
 
         except BudgetExceededError as e:
             logger.warning("Budget limit reached during %s: %s", source_name, e)
-            store.finish_scan_run(run_id, status="budget_exceeded")
+            if not args.dry_run and run_id is not None:
+                store.finish_scan_run(run_id, status="budget_exceeded")
             break
 
         except Exception:
             logger.exception("Error scanning %s", source_name)
-            store.finish_scan_run(run_id, status="error")
+            if not args.dry_run and run_id is not None:
+                store.finish_scan_run(run_id, status="error")
 
     logger.info(
         "Scan complete: %d new articles, %d relevant, %d issues created, $%.4f total cost",
@@ -371,7 +409,10 @@ def cmd_daemon(args: argparse.Namespace, config: Config) -> None:
     # Build a namespace with only the attributes that cmd_run and cmd_review_backlog
     # actually use, so future flags added to their own subparsers don't cause
     # AttributeError when called from the daemon context.
-    sub_args = argparse.Namespace(dry_run=args.dry_run)
+    sub_args = argparse.Namespace(
+        dry_run=args.dry_run,
+        days_back=getattr(args, "days_back", None),
+    )
 
     try:
         while True:
@@ -477,12 +518,22 @@ def main() -> None:
 
     # run
     run_parser = subparsers.add_parser("run", help="Run the full scan pipeline")
-    run_parser.add_argument("--dry-run", action="store_true", help="Don't create GitHub issues")
+    run_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Don't create GitHub issues or write to the database",
+    )
+    run_parser.add_argument(
+        "--days-back",
+        type=int,
+        default=None,
+        help="Override days_back for all sources (e.g. 90 for initial scan)",
+    )
 
     # review-backlog
     backlog_parser = subparsers.add_parser("review-backlog", help="Review and decay open issues")
     backlog_parser.add_argument(
-        "--dry-run", action="store_true", help="Don't post comments or close GitHub issues"
+        "--dry-run", action="store_true", help="Don't modify GitHub issues or write to the database"
     )
 
     # status
@@ -505,6 +556,12 @@ def main() -> None:
         "--dry-run",
         action="store_true",
         help="Pass --dry-run through to scan and backlog review",
+    )
+    daemon_parser.add_argument(
+        "--days-back",
+        type=int,
+        default=None,
+        help="Override days_back for all sources",
     )
 
     args = parser.parse_args()

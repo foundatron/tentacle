@@ -158,15 +158,16 @@ def apply_decay(
                 result = RecheckResult(action="decay", reasoning="budget exceeded", comment="")
 
             if result.action == "halt":
-                store.insert_decay(
-                    DecayEntry(
-                        issue_id=issue.id,
-                        old_maturity=old_maturity,
-                        new_maturity=old_maturity,
-                        reason=f"llm_recheck:halt — {result.reasoning}",
-                        decayed_at=now,
+                if not dry_run:
+                    store.insert_decay(
+                        DecayEntry(
+                            issue_id=issue.id,
+                            old_maturity=old_maturity,
+                            new_maturity=old_maturity,
+                            reason=f"llm_recheck:halt — {result.reasoning}",
+                            decayed_at=now,
+                        )
                     )
-                )
                 if result.comment:
                     comment_on_issue(
                         issue.github_number,
@@ -184,16 +185,17 @@ def apply_decay(
 
             if result.action == "accelerate":
                 new_maturity = 1
-                store.update_issue_maturity(issue.id, new_maturity)
-                store.insert_decay(
-                    DecayEntry(
-                        issue_id=issue.id,
-                        old_maturity=old_maturity,
-                        new_maturity=1,
-                        reason=f"llm_recheck:accelerate — {result.reasoning}",
-                        decayed_at=now,
+                if not dry_run:
+                    store.update_issue_maturity(issue.id, new_maturity)
+                    store.insert_decay(
+                        DecayEntry(
+                            issue_id=issue.id,
+                            old_maturity=old_maturity,
+                            new_maturity=1,
+                            reason=f"llm_recheck:accelerate — {result.reasoning}",
+                            decayed_at=now,
+                        )
                     )
-                )
                 if not repo:
                     logger.warning(
                         "repo not configured; cannot close issue #%d (maturity set to 1 in DB)",
@@ -207,9 +209,9 @@ def apply_decay(
                         repo=repo,
                         dry_run=dry_run,
                     )
-                    if closed:
+                    if closed and not dry_run:
                         store.update_issue_status(issue.id, "closed")
-                    else:
+                    elif not closed:
                         logger.warning(
                             "Failed to close issue #%d on GitHub; "
                             "DB maturity set to 1 but status remains open",
@@ -227,16 +229,17 @@ def apply_decay(
             # action == "decay": fall through to normal decay
 
         # Normal decay
-        store.update_issue_maturity(issue.id, new_maturity)
-        store.insert_decay(
-            DecayEntry(
-                issue_id=issue.id,
-                old_maturity=old_maturity,
-                new_maturity=new_maturity,
-                reason=f"time decay: {age_days} days old, interval {interval_days} days",
-                decayed_at=now,
+        if not dry_run:
+            store.update_issue_maturity(issue.id, new_maturity)
+            store.insert_decay(
+                DecayEntry(
+                    issue_id=issue.id,
+                    old_maturity=old_maturity,
+                    new_maturity=new_maturity,
+                    reason=f"time decay: {age_days} days old, interval {interval_days} days",
+                    decayed_at=now,
+                )
             )
-        )
 
         if new_maturity <= 1:
             if not repo:
@@ -251,9 +254,9 @@ def apply_decay(
                     repo=repo,
                     dry_run=dry_run,
                 )
-                if closed:
+                if closed and not dry_run:
                     store.update_issue_status(issue.id, "closed")
-                else:
+                elif not closed:
                     logger.warning(
                         "Failed to close issue #%d on GitHub; "
                         "DB maturity set to 1 but status remains open",
