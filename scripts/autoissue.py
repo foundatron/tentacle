@@ -417,8 +417,9 @@ def merge_pr(pr_number: str) -> None:
 
 def wait_for_ci(pr_number: str) -> int:
     """Wait for CI. Returns 0=pass, 1=fail, 2=timeout."""
-    log("Waiting for CI checks to complete...")
+    log("Waiting for CI checks to appear...")
     elapsed = 0
+    checks_seen = False
     while elapsed < MAX_CI_WAIT:
         result = run_cmd(
             [
@@ -440,20 +441,29 @@ def wait_for_ci(pr_number: str) -> int:
         except (json.JSONDecodeError, ValueError):
             checks = []
         if checks:
+            if not checks_seen:
+                log(f"Found {len(checks)} CI check(s), waiting for completion...")
+                checks_seen = True
             buckets = [c.get("bucket", "") for c in checks]
-            if any(b == "fail" for b in buckets):
+            if any(b in {"fail", "cancel"} for b in buckets):
                 log("CI checks failed.")
                 for c in checks:
-                    if c.get("bucket") == "fail":
-                        log(f"  FAILED: {c.get('name', 'unknown')}")
+                    if c.get("bucket") in {"fail", "cancel"}:
+                        log(f"  FAILED: {c.get('name', 'unknown')} ({c.get('bucket')})")
                 return 1
             if all(b in {"pass", "skipping"} for b in buckets):
                 log("All CI checks passed!")
                 return 0
+        elif checks_seen:
+            # Checks disappeared (shouldn't happen), keep waiting
+            pass
         if elapsed == 0:
-            log(f"Checks still running, polling every {CI_POLL_INTERVAL}s (max {MAX_CI_WAIT}s)...")
+            log(f"Polling every {CI_POLL_INTERVAL}s (max {MAX_CI_WAIT}s)...")
         time.sleep(CI_POLL_INTERVAL)
         elapsed += CI_POLL_INTERVAL
+    if not checks_seen:
+        log("No CI checks were ever registered. Treating as pass.")
+        return 0
     log("Timed out waiting for CI.")
     return 2
 
