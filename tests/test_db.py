@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import unittest
 from datetime import UTC, datetime
 
 import pytest
 
 from tentacle.db import Store
-from tentacle.models import Analysis, Article, DecayEntry, Issue
+from tentacle.models import Analysis, Article, ContextEntry, DecayEntry, Issue
 
 
 def _make_article(article_id: str = "abc123", title: str = "Test Article") -> Article:
@@ -470,6 +471,66 @@ class TestStore(unittest.TestCase):
         assert len(results) == 2
         numbers = {r.github_number for r in results}
         assert numbers == {10, 11}
+
+
+class TestContextCache(unittest.TestCase):
+    def setUp(self) -> None:
+        self.store = Store(":memory:")
+
+    def tearDown(self) -> None:
+        self.store.close()
+
+    def _make_entry(self, filename: str = "CLAUDE.md", content: str = "# Context") -> ContextEntry:
+        return ContextEntry(
+            filename=filename,
+            content=content,
+            checksum=hashlib.sha256(content.encode()).hexdigest(),
+            fetched_at=datetime(2025, 1, 1, tzinfo=UTC),
+        )
+
+    def test_context_cache_upsert_and_get(self) -> None:
+        entry = self._make_entry()
+        self.store.upsert_context(entry)
+
+        got = self.store.get_context("CLAUDE.md")
+        assert got is not None
+        assert got.filename == "CLAUDE.md"
+        assert got.content == "# Context"
+        assert got.checksum == entry.checksum
+        assert got.fetched_at == datetime(2025, 1, 1, tzinfo=UTC)
+
+    def test_context_cache_upsert_overwrites(self) -> None:
+        self.store.upsert_context(self._make_entry(content="original"))
+
+        new_content = "updated content"
+        updated = ContextEntry(
+            filename="CLAUDE.md",
+            content=new_content,
+            checksum=hashlib.sha256(new_content.encode()).hexdigest(),
+            fetched_at=datetime(2025, 2, 1, tzinfo=UTC),
+        )
+        self.store.upsert_context(updated)
+
+        got = self.store.get_context("CLAUDE.md")
+        assert got is not None
+        assert got.content == new_content
+        assert got.fetched_at == datetime(2025, 2, 1, tzinfo=UTC)
+
+    def test_get_context_missing(self) -> None:
+        result = self.store.get_context("nonexistent.md")
+        assert result is None
+
+    def test_context_cache_multiple_files(self) -> None:
+        self.store.upsert_context(self._make_entry("CLAUDE.md", "claude content"))
+        self.store.upsert_context(self._make_entry("docs/architecture.md", "arch content"))
+
+        claude = self.store.get_context("CLAUDE.md")
+        arch = self.store.get_context("docs/architecture.md")
+
+        assert claude is not None
+        assert claude.content == "claude content"
+        assert arch is not None
+        assert arch.content == "arch content"
 
 
 if __name__ == "__main__":
