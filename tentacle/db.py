@@ -3,11 +3,27 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypedDict
 
 from tentacle.models import Analysis, Article, DecayEntry, Issue, ScanRun
+
+logger = logging.getLogger(__name__)
+
+
+class Stats(TypedDict):
+    """Aggregate counts for the catalog."""
+
+    total_articles: int
+    total_analyses: int
+    total_issues: int
+    open_issues: int
+    total_scan_runs: int
+    latest_scan_at: str | None
+
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS articles (
@@ -123,13 +139,13 @@ class Store:
                 article.source,
                 article.source_id,
                 article.title,
-                json.dumps(article.authors) if article.authors else None,
+                json.dumps(article.authors) if article.authors is not None else None,
                 article.abstract,
                 article.url,
                 article.pdf_url,
                 _iso(article.published_at),
                 _iso(article.discovered_at),
-                json.dumps(article.tags) if article.tags else None,
+                json.dumps(article.tags) if article.tags is not None else None,
                 article.full_text,
                 article.access_status,
             ),
@@ -155,6 +171,13 @@ class Store:
         ).fetchall()
         return [_row_to_article(r) for r in rows]
 
+    def get_articles_by_source(self, source: str) -> list[Article]:
+        rows = self._conn.execute(
+            "SELECT * FROM articles WHERE source = ? ORDER BY discovered_at DESC",
+            (source,),
+        ).fetchall()
+        return [_row_to_article(r) for r in rows]
+
     # -- Analyses --
 
     def insert_analysis(self, analysis: Analysis) -> int:
@@ -169,8 +192,12 @@ class Store:
                 analysis.article_id,
                 analysis.relevance_score,
                 analysis.relevance_reasoning,
-                json.dumps(analysis.key_insights) if analysis.key_insights else None,
-                json.dumps(analysis.applicable_scopes) if analysis.applicable_scopes else None,
+                json.dumps(analysis.key_insights) if analysis.key_insights is not None else None,
+                (
+                    json.dumps(analysis.applicable_scopes)
+                    if analysis.applicable_scopes is not None
+                    else None
+                ),
                 analysis.suggested_type,
                 analysis.suggested_title,
                 analysis.suggested_body,
@@ -264,6 +291,13 @@ class Store:
         )
         self._conn.commit()
 
+    def get_decay_log_for_issue(self, issue_id: int) -> list[DecayEntry]:
+        rows = self._conn.execute(
+            "SELECT * FROM decay_log WHERE issue_id = ? ORDER BY decayed_at DESC",
+            (issue_id,),
+        ).fetchall()
+        return [_row_to_decay(r) for r in rows]
+
     # -- Scan runs --
 
     def start_scan_run(self, source: str) -> int:
@@ -310,6 +344,25 @@ class Store:
             "SELECT * FROM scan_runs ORDER BY started_at DESC LIMIT ?", (limit,)
         ).fetchall()
         return [_row_to_scan_run(r) for r in rows]
+
+    def get_stats(self) -> Stats:
+        row = self._conn.execute(
+            """SELECT
+                (SELECT COUNT(*) FROM articles),
+                (SELECT COUNT(*) FROM analyses),
+                (SELECT COUNT(*) FROM issues),
+                (SELECT COUNT(*) FROM issues WHERE status = 'open'),
+                (SELECT COUNT(*) FROM scan_runs),
+                (SELECT started_at FROM scan_runs ORDER BY started_at DESC LIMIT 1)"""
+        ).fetchone()
+        return Stats(
+            total_articles=row[0],
+            total_analyses=row[1],
+            total_issues=row[2],
+            open_issues=row[3],
+            total_scan_runs=row[4],
+            latest_scan_at=row[5],
+        )
 
 
 # -- Row converters --
@@ -384,4 +437,20 @@ def _row_to_scan_run(row: sqlite3.Row) -> ScanRun:
         issues_created=row["issues_created"],
         total_cost_usd=row["total_cost_usd"],
         status=row["status"],
+    )
+
+
+def _row_to_decay(row: sqlite3.Row) -> DecayEntry:
+    decayed_at = _parse_dt(row["decayed_at"])
+    if decayed_at is None:
+        msg = f"decay_log row {row['id']}: decayed_at is NULL or unparseable"
+        logger.warning(msg)
+        raise ValueError(msg)
+    return DecayEntry(
+        id=row["id"],
+        issue_id=row["issue_id"],
+        old_maturity=row["old_maturity"],
+        new_maturity=row["new_maturity"],
+        reason=row["reason"],
+        decayed_at=decayed_at,
     )

@@ -17,6 +17,7 @@ from tentacle.llm.analyze import analyze_article
 from tentacle.llm.client import CostTracker, LLMClient
 from tentacle.llm.filter import filter_article
 from tentacle.sources.arxiv import ArxivAdapter
+from tentacle.sources.base import SourceAdapter
 from tentacle.sources.hackernews import HackerNewsAdapter
 from tentacle.sources.rss import RSSAdapter
 from tentacle.sources.semantic_scholar import SemanticScholarAdapter
@@ -38,9 +39,9 @@ def _get_store(config: Config) -> Store:
     return Store(str(db_path))
 
 
-def _get_sources(config: Config) -> list[tuple[str, list[str], int, object]]:
+def _get_sources(config: Config) -> list[tuple[str, list[str], int, SourceAdapter]]:
     """Return enabled sources as (name, queries, max_results, adapter) tuples."""
-    sources = []
+    sources: list[tuple[str, list[str], int, SourceAdapter]] = []
     if config.arxiv.enabled:
         sources.append(("arxiv", config.arxiv.queries, config.arxiv.max_results, ArxivAdapter()))
     if config.semantic_scholar.enabled:
