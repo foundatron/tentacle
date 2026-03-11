@@ -473,6 +473,105 @@ class TestStore(unittest.TestCase):
         assert numbers == {10, 11}
 
 
+class TestGetStatusSummary(unittest.TestCase):
+    def setUp(self) -> None:
+        self.store = Store(":memory:")
+
+    def tearDown(self) -> None:
+        self.store.close()
+
+    def test_get_status_summary_empty_db(self) -> None:
+        summary = self.store.get_status_summary()
+        assert summary["total_articles"] == 0
+        assert summary["total_analyses"] == 0
+        assert summary["relevance_tiers"]["high"] == 0
+        assert summary["relevance_tiers"]["medium"] == 0
+        assert summary["relevance_tiers"]["low"] == 0
+        assert summary["open_issues"] == 0
+        assert summary["closed_issues"] == 0
+        assert summary["monthly_costs"] == []
+
+    def test_get_status_summary_with_data(self) -> None:
+        # Insert articles with analyses spanning all three relevance tiers
+        for i, score in enumerate([0.9, 0.5, 0.1], start=1):
+            article_id = f"a{i}"
+            article = _make_article(article_id)
+            self.store.insert_article(article)
+            analysis = _make_analysis(article_id)
+            analysis.relevance_score = score
+            self.store.insert_analysis(analysis)
+
+        # Get the analysis IDs for issue creation
+        analyses = [self.store.get_analysis_for_article(f"a{i}") for i in range(1, 4)]
+        assert all(a is not None for a in analyses)
+
+        # Open issue for a1
+        open_issue = Issue(
+            article_id="a1",
+            analysis_id=analyses[0].id,  # type: ignore[union-attr]
+            github_number=1,
+            github_url="https://github.com/foundatron/octopusgarden/issues/1",
+            title="feat: open",
+            created_at=datetime(2025, 1, 1, tzinfo=UTC),
+            maturity_score=4,
+            current_maturity=4,
+        )
+        self.store.insert_issue(open_issue)
+
+        # Closed issue for a2
+        closed_issue_id = self.store.insert_issue(
+            Issue(
+                article_id="a2",
+                analysis_id=analyses[1].id,  # type: ignore[union-attr]
+                github_number=2,
+                github_url="https://github.com/foundatron/octopusgarden/issues/2",
+                title="feat: closed",
+                created_at=datetime(2025, 1, 2, tzinfo=UTC),
+                maturity_score=4,
+                current_maturity=4,
+            )
+        )
+        self.store.update_issue_status(closed_issue_id, "closed")
+
+        # Insert scan runs across two months; pin started_at.
+        # We access _conn directly here because there is no public API for setting
+        # started_at to an arbitrary timestamp — start_scan_run always uses now().
+        run1 = self.store.start_scan_run("arxiv")
+        self.store.finish_scan_run(run1, total_cost_usd=1.00)
+        now_year = datetime.now(UTC).year
+        now_month = datetime.now(UTC).month
+        self.store._conn.execute(
+            "UPDATE scan_runs SET started_at = ? WHERE id = ?",
+            (f"{now_year}-{now_month:02d}-01T00:00:00+00:00", run1),
+        )
+        self.store._conn.commit()
+
+        summary = self.store.get_status_summary()
+        assert summary["total_articles"] == 3
+        assert summary["total_analyses"] == 3
+        assert summary["relevance_tiers"]["high"] == 1  # score 0.9
+        assert summary["relevance_tiers"]["medium"] == 1  # score 0.5
+        assert summary["relevance_tiers"]["low"] == 1  # score 0.1
+        assert summary["open_issues"] == 1
+        assert summary["closed_issues"] == 1
+        assert len(summary["monthly_costs"]) >= 1
+        assert any(entry["cost"] == pytest.approx(1.00) for entry in summary["monthly_costs"])
+
+    def test_get_status_summary_relevance_tiers_boundary(self) -> None:
+        """Boundary values: 0.7 -> high, 0.3 -> medium, 0.29999 -> low."""
+        for i, score in enumerate([0.7, 0.3, 0.29999], start=1):
+            article_id = f"b{i}"
+            self.store.insert_article(_make_article(article_id))
+            analysis = _make_analysis(article_id)
+            analysis.relevance_score = score
+            self.store.insert_analysis(analysis)
+
+        summary = self.store.get_status_summary()
+        assert summary["relevance_tiers"]["high"] == 1  # 0.7
+        assert summary["relevance_tiers"]["medium"] == 1  # 0.3
+        assert summary["relevance_tiers"]["low"] == 1  # 0.29999
+
+
 class TestContextCache(unittest.TestCase):
     def setUp(self) -> None:
         self.store = Store(":memory:")
