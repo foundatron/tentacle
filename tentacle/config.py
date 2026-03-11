@@ -34,6 +34,7 @@ class Config:
     scan_interval: str = "daily"
     backlog_interval: str = "weekly"
     max_issues_per_cycle: int = 3
+    issue_creation_delay: int = 60  # seconds to wait between issue creations
     min_maturity_for_issue: int = 3
     relevance_threshold: float = 0.3
     scan_budget: float = 2.0

@@ -12,6 +12,8 @@ issue_label = "tentacle"
 scan_interval = "daily"
 backlog_interval = "weekly"
 max_issues_per_cycle = 3
+# Seconds to wait between issue creations to avoid GitHub rate limits. Set to 0 to disable.
+issue_creation_delay = 60
 min_maturity_for_issue = 3
 relevance_threshold = 0.3
 # Maximum LLM cost (USD) for a single scan run. 0.0 means no limit.

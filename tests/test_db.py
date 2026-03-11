@@ -417,6 +417,36 @@ class TestStore(unittest.TestCase):
         assert jan["total_cost"] == pytest.approx(1.00)
         assert jan["scan_count"] == 1
 
+    def test_get_issues_by_source_url_found(self) -> None:
+        article = _make_article()
+        self.store.insert_article(article)
+        analysis_id = self.store.insert_analysis(_make_analysis())
+        issue = _make_issue(analysis_id=analysis_id)
+        self.store.insert_issue(issue)
+
+        results = self.store.get_issues_by_source_url(article.url)
+        assert len(results) == 1
+        assert results[0].github_number == 42
+
+    def test_get_issues_by_source_url_not_found(self) -> None:
+        results = self.store.get_issues_by_source_url("https://example.com/nonexistent")
+        assert results == []
+
+    def test_get_issues_by_source_url_multiple_issues(self) -> None:
+        article = _make_article()
+        self.store.insert_article(article)
+        analysis_id = self.store.insert_analysis(_make_analysis())
+
+        issue1 = _make_issue(analysis_id=analysis_id, github_number=10)
+        issue2 = _make_issue(analysis_id=analysis_id, github_number=11)
+        self.store.insert_issue(issue1)
+        self.store.insert_issue(issue2)
+
+        results = self.store.get_issues_by_source_url(article.url)
+        assert len(results) == 2
+        numbers = {r.github_number for r in results}
+        assert numbers == {10, 11}
+
 
 if __name__ == "__main__":
     unittest.main()
