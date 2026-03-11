@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import html.parser
 import logging
 import urllib.request
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
@@ -15,6 +17,57 @@ from tentacle.sources.base import SourceAdapter
 logger = logging.getLogger(__name__)
 
 _ATOM_NS = "{http://www.w3.org/2005/Atom}"
+_SKIP_TAGS = {"script", "style", "nav", "header", "footer"}
+_CONTENT_FETCH_WORKERS = 10
+
+
+class _HTMLToTextParser(html.parser.HTMLParser):
+    """Strip HTML tags and extract plain text, skipping non-content elements.
+
+    Uses per-tag depth counters so that mismatched end tags (malformed HTML)
+    only close the matching open tag, preventing script/style content from
+    leaking into extracted text.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._skip_counts: dict[str, int] = {}
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in _SKIP_TAGS:
+            self._skip_counts[tag] = self._skip_counts.get(tag, 0) + 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _SKIP_TAGS and self._skip_counts.get(tag, 0) > 0:
+            self._skip_counts[tag] -= 1
+
+    def handle_data(self, data: str) -> None:
+        if sum(self._skip_counts.values()) == 0:
+            self._parts.append(data)
+
+    def get_text(self) -> str:
+        return " ".join(" ".join(self._parts).split())
+
+
+def _fetch_content(url: str, timeout: int, max_bytes: int) -> str | None:
+    """Fetch a URL and return extracted plain text, or None on any failure."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "tentacle/0.1"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            content_type: str = resp.headers.get("Content-Type", "")
+            charset = "utf-8"
+            if "charset=" in content_type:
+                charset = content_type.split("charset=")[-1].split(";")[0].strip().strip("\"'")
+            data = resp.read(max_bytes)
+        html_text = data.decode(charset, errors="replace")
+        parser = _HTMLToTextParser()
+        parser.feed(html_text)
+        text = parser.get_text()
+        return text if text else None
+    except Exception:
+        logger.warning("Failed to fetch content from %s", url, exc_info=True)
+        return None
 
 
 class RSSAdapter(SourceAdapter):
@@ -22,6 +75,16 @@ class RSSAdapter(SourceAdapter):
 
     The `queries` parameter is interpreted as a list of feed URLs.
     """
+
+    def __init__(
+        self,
+        extract_content: bool = False,
+        content_timeout: int = 30,
+        content_max_bytes: int = 1_048_576,
+    ) -> None:
+        self._extract_content = extract_content
+        self._content_timeout = content_timeout
+        self._content_max_bytes = content_max_bytes
 
     @property
     def name(self) -> str:
@@ -48,12 +111,37 @@ class RSSAdapter(SourceAdapter):
 
         # Detect RSS vs Atom
         if root.tag == "rss" or root.find("channel") is not None:
-            return self._parse_rss(root)
-        if root.tag == f"{_ATOM_NS}feed":
-            return self._parse_atom(root)
+            articles = self._parse_rss(root)
+        elif root.tag == f"{_ATOM_NS}feed":
+            articles = self._parse_atom(root)
+        else:
+            logger.warning("Unknown feed format: %s", root.tag)
+            return []
 
-        logger.warning("Unknown feed format: %s", root.tag)
-        return []
+        if self._extract_content:
+            articles = self._fetch_contents_parallel(articles)
+
+        return articles
+
+    def _fetch_contents_parallel(self, articles: list[Article]) -> list[Article]:
+        """Fetch full-text content for all articles in parallel."""
+        urls: list[tuple[int, str]] = [(i, a.url) for i, a in enumerate(articles) if a.url]
+        if not urls:
+            return articles
+
+        workers = min(_CONTENT_FETCH_WORKERS, len(urls))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(
+                    _fetch_content, url, self._content_timeout, self._content_max_bytes
+                ): i
+                for i, url in urls
+            }
+            for future in as_completed(futures):
+                idx = futures[future]
+                articles[idx].full_text = future.result()
+
+        return articles
 
     def _parse_rss(self, root: ET.Element) -> list[Article]:
         articles: list[Article] = []
@@ -89,19 +177,19 @@ class RSSAdapter(SourceAdapter):
             elif dc_creator is not None and dc_creator.text:
                 author = dc_creator.text
 
-            articles.append(
-                Article(
-                    id=fingerprint(link_el.text),
-                    source="rss",
-                    title=title_el.text.strip(),
-                    url=link_el.text.strip(),
-                    discovered_at=datetime.now(UTC),
-                    authors=[author] if author else None,
-                    abstract=abstract,
-                    published_at=published_at,
-                    access_status="open",
-                )
+            article = Article(
+                id=fingerprint(link_el.text),
+                source="rss",
+                title=title_el.text.strip(),
+                url=link_el.text.strip(),
+                discovered_at=datetime.now(UTC),
+                authors=[author] if author else None,
+                abstract=abstract,
+                published_at=published_at,
+                access_status="open",
             )
+
+            articles.append(article)
 
         logger.info("RSS: %d items parsed", len(articles))
         return articles
@@ -152,19 +240,19 @@ class RSSAdapter(SourceAdapter):
                 except ValueError:
                     pass
 
-            articles.append(
-                Article(
-                    id=fingerprint(url),
-                    source="rss",
-                    title=title_el.text.strip(),
-                    url=url,
-                    discovered_at=datetime.now(UTC),
-                    authors=authors or None,
-                    abstract=abstract,
-                    published_at=published_at,
-                    access_status="open",
-                )
+            article = Article(
+                id=fingerprint(url),
+                source="rss",
+                title=title_el.text.strip(),
+                url=url,
+                discovered_at=datetime.now(UTC),
+                authors=authors or None,
+                abstract=abstract,
+                published_at=published_at,
+                access_status="open",
             )
+
+            articles.append(article)
 
         logger.info("Atom: %d entries parsed", len(articles))
         return articles

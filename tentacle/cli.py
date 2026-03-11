@@ -83,7 +83,14 @@ def _get_sources(config: Config) -> list[tuple[str, list[str], int, SourceAdapte
             )
         )
     if config.rss.enabled and config.rss.queries:
-        sources.append(("rss", config.rss.queries, config.rss.max_results, RSSAdapter()))
+        sources.append(
+            (
+                "rss",
+                config.rss.queries,
+                config.rss.max_results,
+                RSSAdapter(extract_content=config.rss.extract_content),
+            )
+        )
     return sources
 
 

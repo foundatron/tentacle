@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, call, patch
 
 from tentacle.sources.arxiv import PAGE_SIZE, ArxivAdapter
 from tentacle.sources.hackernews import HackerNewsAdapter
-from tentacle.sources.rss import RSSAdapter
+from tentacle.sources.rss import RSSAdapter, _HTMLToTextParser
 from tentacle.sources.semantic_scholar import SemanticScholarAdapter
 
 ARXIV_RESPONSE = b"""\
@@ -77,10 +77,47 @@ RSS_RESPONSE = b"""\
   </channel>
 </rss>"""
 
+ATOM_RESPONSE = b"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Research Feed</title>
+  <entry>
+    <title>Autonomous Agents Survey</title>
+    <link rel="alternate" href="https://example.com/agents-survey"/>
+    <summary>A comprehensive survey of autonomous agents.</summary>
+    <published>2024-03-15T00:00:00Z</published>
+    <author><name>Jane Doe</name></author>
+    <author><name>John Smith</name></author>
+  </entry>
+</feed>"""
 
-def _mock_urlopen(data: bytes) -> MagicMock:
+HTML_PAGE = b"""\
+<html>
+<head><title>Page Title</title></head>
+<body>
+<nav>Navigation stuff</nav>
+<header>Site header</header>
+<h1>Article Title</h1>
+<p>Main content paragraph with useful text.</p>
+<script>var x = 1;</script>
+<footer>Footer content</footer>
+</body>
+</html>"""
+
+
+def _mock_urlopen(data: bytes, content_type: str = "text/xml") -> MagicMock:
     mock_resp = MagicMock()
     mock_resp.read.return_value = data
+    mock_resp.headers.get.return_value = content_type
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    return mock_resp
+
+
+def _mock_urlopen_html(data: bytes) -> MagicMock:
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = data
+    mock_resp.headers.get.return_value = "text/html; charset=utf-8"
     mock_resp.__enter__ = lambda s: s
     mock_resp.__exit__ = MagicMock(return_value=False)
     return mock_resp
@@ -590,6 +627,119 @@ class TestRSSAdapter(unittest.TestCase):
         assert a.source == "rss"
         assert a.title == "New Findings in Code Gen"
         assert a.url == "https://blog.example.com/codegen"
+
+    @patch("tentacle.sources.rss.urllib.request.urlopen")
+    def test_fetch_parses_atom(self, mock_urlopen_fn: MagicMock) -> None:
+        mock_urlopen_fn.return_value = _mock_urlopen(ATOM_RESPONSE)
+        adapter = RSSAdapter()
+        articles = adapter.fetch(["https://example.com/atom.xml"], max_results=10)
+
+        assert len(articles) == 1
+        a = articles[0]
+        assert a.source == "rss"
+        assert a.title == "Autonomous Agents Survey"
+        assert a.url == "https://example.com/agents-survey"
+        assert a.authors == ["Jane Doe", "John Smith"]
+        assert a.abstract == "A comprehensive survey of autonomous agents."
+        assert a.published_at is not None
+
+    @patch("tentacle.sources.rss.urllib.request.urlopen")
+    def test_content_extraction_enabled(self, mock_urlopen_fn: MagicMock) -> None:
+        feed_resp = _mock_urlopen(RSS_RESPONSE)
+        html_resp = _mock_urlopen_html(HTML_PAGE)
+        mock_urlopen_fn.side_effect = [feed_resp, html_resp]
+
+        adapter = RSSAdapter(extract_content=True)
+        articles = adapter.fetch(["https://blog.example.com/feed"], max_results=10)
+
+        assert len(articles) == 1
+        assert articles[0].full_text is not None
+        assert "Main content paragraph" in articles[0].full_text
+        assert mock_urlopen_fn.call_count == 2
+
+    @patch("tentacle.sources.rss.urllib.request.urlopen")
+    def test_content_extraction_disabled_by_default(self, mock_urlopen_fn: MagicMock) -> None:
+        mock_urlopen_fn.return_value = _mock_urlopen(RSS_RESPONSE)
+        adapter = RSSAdapter()
+        articles = adapter.fetch(["https://blog.example.com/feed"], max_results=10)
+
+        assert len(articles) == 1
+        assert articles[0].full_text is None
+        assert mock_urlopen_fn.call_count == 1
+
+    @patch("tentacle.sources.rss.urllib.request.urlopen")
+    def test_content_extraction_fetch_error(self, mock_urlopen_fn: MagicMock) -> None:
+        feed_resp = _mock_urlopen(RSS_RESPONSE)
+        mock_urlopen_fn.side_effect = [feed_resp, urllib.error.URLError("connection refused")]
+
+        adapter = RSSAdapter(extract_content=True)
+        with self.assertLogs("tentacle.sources.rss", level="WARNING"):
+            articles = adapter.fetch(["https://blog.example.com/feed"], max_results=10)
+
+        assert len(articles) == 1
+        assert articles[0].full_text is None
+        assert articles[0].title == "New Findings in Code Gen"
+
+    @patch("tentacle.sources.rss.urllib.request.urlopen")
+    def test_content_extraction_size_limit(self, mock_urlopen_fn: MagicMock) -> None:
+        large_html = b"<p>" + b"x" * 2_000_000 + b"</p>"
+        feed_resp = _mock_urlopen(RSS_RESPONSE)
+        # simulate read(max_bytes) returning only max_bytes of data
+        html_resp = _mock_urlopen_html(large_html[:1_048_576])
+        mock_urlopen_fn.side_effect = [feed_resp, html_resp]
+
+        adapter = RSSAdapter(extract_content=True, content_max_bytes=1_048_576)
+        articles = adapter.fetch(["https://blog.example.com/feed"], max_results=10)
+
+        assert len(articles) == 1
+        # No crash, content may be present but bounded
+        assert mock_urlopen_fn.call_count == 2
+        # Verify _fetch_content passes max_bytes to resp.read()
+        html_resp.read.assert_called_with(1_048_576)
+
+
+class TestHTMLToTextParser(unittest.TestCase):
+    def test_strips_script_and_style(self) -> None:
+        parser = _HTMLToTextParser()
+        parser.feed(
+            "<html><body>"
+            "<script>alert('xss')</script>"
+            "<style>body { color: red; }</style>"
+            "<p>Visible text here.</p>"
+            "</body></html>"
+        )
+        text = parser.get_text()
+        assert "Visible text here." in text
+        assert "alert" not in text
+        assert "color: red" not in text
+
+    def test_strips_nav_header_footer(self) -> None:
+        parser = _HTMLToTextParser()
+        parser.feed(
+            "<nav>Skip to content</nav>"
+            "<header>Site Title</header>"
+            "<main><p>Article body.</p></main>"
+            "<footer>Copyright 2024</footer>"
+        )
+        text = parser.get_text()
+        assert "Article body." in text
+        assert "Skip to content" not in text
+        assert "Site Title" not in text
+        assert "Copyright 2024" not in text
+
+    def test_preserves_link_text(self) -> None:
+        parser = _HTMLToTextParser()
+        parser.feed('<p>See <a href="https://example.com">this article</a> for details.</p>')
+        text = parser.get_text()
+        assert "this article" in text
+        assert "for details" in text
+
+    def test_collapses_whitespace(self) -> None:
+        parser = _HTMLToTextParser()
+        parser.feed("<p>Hello\n\n   world   \t!</p>")
+        text = parser.get_text()
+        assert "  " not in text
+        assert "\n" not in text
 
 
 if __name__ == "__main__":
