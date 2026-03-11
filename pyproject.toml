@@ -6,10 +6,18 @@ build-backend = "hatchling.build"
 name = "tentacle"
 version = "0.1.0"
 description = "Research scout service for OctopusGarden"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Ryan Small"}]
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=0.40.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/foundatron/tentacle"
+Repository = "https://github.com/foundatron/tentacle"
+Issues = "https://github.com/foundatron/tentacle/issues"
 
 [project.scripts]
 tentacle = "tentacle.cli:main"
