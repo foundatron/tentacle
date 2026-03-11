@@ -64,3 +64,4 @@ max_results = 30
 enabled = false
 queries = []
 max_results = 50
+# extract_content = false

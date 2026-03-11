@@ -13,6 +13,7 @@ from tentacle.config import (
     Config,
     ConfigError,
     HackerNewsSourceConfig,
+    RSSSourceConfig,
     SourceConfig,
     load_config,
     validate,
@@ -309,6 +310,37 @@ max_results = 50
             self.assertEqual(user_warnings, [])
         finally:
             tmp_path.unlink()
+
+
+class TestRSSSourceConfig(unittest.TestCase):
+    def _write_toml(self, content: bytes) -> Path:
+        with tempfile.NamedTemporaryFile(suffix=".toml", delete=False) as f:
+            f.write(content)
+            return Path(f.name)
+
+    def test_rss_extract_content_config(self) -> None:
+        tmp = self._write_toml(
+            b'anthropic_api_key = "key"\n[sources.rss]\nextract_content = true\n'
+        )
+        try:
+            config = load_config(tmp)
+            assert config.rss.extract_content is True
+        finally:
+            tmp.unlink()
+
+    def test_rss_extract_content_default(self) -> None:
+        tmp = self._write_toml(b'anthropic_api_key = "key"\n[sources.rss]\nenabled = false\n')
+        try:
+            config = load_config(tmp)
+            assert config.rss.extract_content is False
+        finally:
+            tmp.unlink()
+
+    def test_rss_source_config_defaults(self) -> None:
+        cfg = RSSSourceConfig()
+        assert cfg.extract_content is False
+        assert cfg.enabled is True
+        assert cfg.max_results == 50
 
 
 if __name__ == "__main__":

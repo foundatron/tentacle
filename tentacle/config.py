@@ -88,6 +88,7 @@ max_results = 30
 enabled = false
 queries = []
 max_results = 50
+# extract_content = false
 """
 
 
@@ -131,6 +132,13 @@ class HackerNewsSourceConfig(SourceConfig):
 
 
 @dataclasses.dataclass
+class RSSSourceConfig(SourceConfig):
+    """RSS/Atom-specific source configuration."""
+
+    extract_content: bool = False
+
+
+@dataclasses.dataclass
 class Config:
     """Application configuration."""
 
@@ -164,7 +172,7 @@ class Config:
         default_factory=SemanticScholarSourceConfig
     )
     hackernews: HackerNewsSourceConfig = dataclasses.field(default_factory=HackerNewsSourceConfig)
-    rss: SourceConfig = dataclasses.field(default_factory=SourceConfig)
+    rss: RSSSourceConfig = dataclasses.field(default_factory=RSSSourceConfig)
 
     # Decay
     decay_grace_days: int = 30
