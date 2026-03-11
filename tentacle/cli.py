@@ -253,11 +253,36 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
 def cmd_review_backlog(args: argparse.Namespace, config: Config) -> None:
     """Review and decay open issues."""
     store = _get_store(config)
+    now = datetime.now(UTC)
+
+    llm_client: LLMClient | None = None
+    context = ""
+    if config.anthropic_api_key:
+        cost_tracker = CostTracker()
+        # scan_budget is reused here intentionally: scan and backlog review share the
+        # same per-operation budget cap. Operators running both in the same window
+        # should be aware they draw from the same monthly_budget pool.
+        llm_client = LLMClient(
+            config.anthropic_api_key,
+            cost_tracker,
+            scan_budget=config.scan_budget,
+            monthly_budget=config.monthly_budget,
+            get_monthly_cost=lambda: store.get_monthly_cost(now.year, now.month)["total_cost"],
+        )
+        context_result = fetch_context(store=store)
+        context = context_result.context
+    else:
+        logger.info("ANTHROPIC_API_KEY not set; running mechanical decay only")
 
     decayed = apply_decay(
         store,
         grace_days=config.decay_grace_days,
         interval_days=config.decay_interval_days,
+        llm_client=llm_client,
+        context=context,
+        repo=config.target_repo,
+        model=config.decay_model,
+        dry_run=args.dry_run,
     )
 
     logger.info("Backlog review: %d issues decayed", decayed)
@@ -321,7 +346,10 @@ def main() -> None:
     run_parser.add_argument("--dry-run", action="store_true", help="Don't create GitHub issues")
 
     # review-backlog
-    subparsers.add_parser("review-backlog", help="Review and decay open issues")
+    backlog_parser = subparsers.add_parser("review-backlog", help="Review and decay open issues")
+    backlog_parser.add_argument(
+        "--dry-run", action="store_true", help="Don't post comments or close GitHub issues"
+    )
 
     # status
     subparsers.add_parser("status", help="Show current status")

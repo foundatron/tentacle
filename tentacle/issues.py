@@ -31,6 +31,9 @@ def _title_similarity(a: str, b: str) -> float:
 
 _GH_SEARCH_SPECIAL_RE = re.compile(r'["\':()<>|]|(?:^|\s)(?:AND|OR|NOT)(?:\s|$)')
 
+# GitHub API comment/body character limit.
+_GH_COMMENT_MAX_LEN = 65536
+
 
 def _sanitize_search_query(title: str) -> str:
     """Strip characters and operators that could be misinterpreted by GitHub's search syntax."""
@@ -166,6 +169,98 @@ def create_issue(
         maturity_score=analysis.maturity_score,
         current_maturity=analysis.maturity_score,
     )
+
+
+def comment_on_issue(
+    issue_number: int,
+    comment: str,
+    *,
+    repo: str,
+    dry_run: bool = False,
+) -> bool:
+    """Post a comment on a GitHub issue. Returns True on success, False on failure."""
+    if dry_run:
+        logger.info("DRY RUN: would comment on issue #%d", issue_number)
+        return True
+    if len(comment) > _GH_COMMENT_MAX_LEN:
+        logger.warning(
+            "comment_on_issue: comment truncated from %d to %d chars for issue #%d",
+            len(comment),
+            _GH_COMMENT_MAX_LEN,
+            issue_number,
+        )
+        comment = comment[:_GH_COMMENT_MAX_LEN]
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "issue",
+                "comment",
+                str(issue_number),
+                "--repo",
+                repo,
+                "--body",
+                comment,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        logger.warning("comment_on_issue: failed to post comment on issue #%d", issue_number)
+        return False
+
+    if result.returncode != 0:
+        logger.warning("comment_on_issue: gh issue comment failed: %s", result.stderr[:200])
+        return False
+
+    return True
+
+
+def close_issue(
+    issue_number: int,
+    comment: str,
+    *,
+    repo: str,
+    dry_run: bool = False,
+) -> bool:
+    """Close a GitHub issue with a comment. Returns True on success, False on failure."""
+    if dry_run:
+        logger.info("DRY RUN: would close issue #%d", issue_number)
+        return True
+    if len(comment) > _GH_COMMENT_MAX_LEN:
+        logger.warning(
+            "close_issue: comment truncated from %d to %d chars for issue #%d",
+            len(comment),
+            _GH_COMMENT_MAX_LEN,
+            issue_number,
+        )
+        comment = comment[:_GH_COMMENT_MAX_LEN]
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "issue",
+                "close",
+                str(issue_number),
+                "--repo",
+                repo,
+                "--comment",
+                comment,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        logger.warning("close_issue: failed to close issue #%d", issue_number)
+        return False
+
+    if result.returncode != 0:
+        logger.warning("close_issue: gh issue close failed: %s", result.stderr[:200])
+        return False
+
+    return True
 
 
 def _format_body(article: Article, analysis: Analysis) -> str:
