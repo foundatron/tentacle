@@ -28,9 +28,7 @@ class TestFilter(unittest.TestCase):
         client.complete.return_value = '{"relevance": 0.85, "reasoning": "Directly applicable"}'
         client.costs = CostTracker()
 
-        score, reasoning = filter_article(
-            client, _make_article(), model="claude-haiku-4-5-20251001"
-        )
+        score, reasoning = filter_article(client, _make_article(), model="claude-haiku-4-5")
         assert score == 0.85
         assert reasoning == "Directly applicable"
 
@@ -39,9 +37,7 @@ class TestFilter(unittest.TestCase):
         client.complete.return_value = '{"relevance": 0.1, "reasoning": "Not relevant"}'
         client.costs = CostTracker()
 
-        score, _reasoning = filter_article(
-            client, _make_article(), model="claude-haiku-4-5-20251001"
-        )
+        score, _reasoning = filter_article(client, _make_article(), model="claude-haiku-4-5")
         assert score == 0.1
 
     def test_parse_error_returns_zero(self) -> None:
@@ -49,9 +45,7 @@ class TestFilter(unittest.TestCase):
         client.complete.return_value = "not json at all"
         client.costs = CostTracker()
 
-        score, reasoning = filter_article(
-            client, _make_article(), model="claude-haiku-4-5-20251001"
-        )
+        score, reasoning = filter_article(client, _make_article(), model="claude-haiku-4-5")
         assert score == 0.0
         assert reasoning == "parse error"
 
@@ -62,7 +56,7 @@ class TestFilter(unittest.TestCase):
 
         article = _make_article()
         article.abstract = None
-        score, _ = filter_article(client, article, model="claude-haiku-4-5-20251001")
+        score, _ = filter_article(client, article, model="claude-haiku-4-5")
         assert score == 0.5
         # Verify prompt includes "(no abstract available)"
         call_args = client.complete.call_args

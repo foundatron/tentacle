@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Pricing per million tokens (as of 2025)
 _PRICING: dict[str, tuple[float, float]] = {
     # (input_per_M, output_per_M)
-    "claude-haiku-4-5-20251001": (0.80, 4.00),
+    "claude-haiku-4-5": (0.80, 4.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-opus-4-6": (15.00, 75.00),
 }

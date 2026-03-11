@@ -36,7 +36,7 @@ scan_budget = 2.0
 monthly_budget = 10.0
 
 # LLM models
-filter_model = "claude-haiku-4-5-20251001"
+filter_model = "claude-haiku-4-5"
 analyze_model = "claude-sonnet-4-6"
 
 # Database
@@ -95,7 +95,12 @@ class SourceConfig:
     enabled: bool = True
     queries: list[str] = dataclasses.field(default_factory=list)
     max_results: int = 50
-    # arXiv-specific fields; ignored by other adapters
+
+
+@dataclasses.dataclass
+class ArxivSourceConfig(SourceConfig):
+    """arXiv-specific source configuration."""
+
     days_back: int | None = None
     sort_order: str = "descending"
 
@@ -122,14 +127,14 @@ class Config:
     monthly_budget: float = 10.0
 
     # LLM models
-    filter_model: str = "claude-haiku-4-5-20251001"
+    filter_model: str = "claude-haiku-4-5"
     analyze_model: str = "claude-sonnet-4-6"
 
     # Database
     db_path: str = "~/.local/share/tentacle/tentacle.db"
 
     # Sources
-    arxiv: SourceConfig = dataclasses.field(default_factory=SourceConfig)
+    arxiv: ArxivSourceConfig = dataclasses.field(default_factory=ArxivSourceConfig)
     semantic_scholar: SourceConfig = dataclasses.field(default_factory=SourceConfig)
     hackernews: SourceConfig = dataclasses.field(default_factory=SourceConfig)
     rss: SourceConfig = dataclasses.field(default_factory=SourceConfig)
@@ -224,7 +229,6 @@ def load_config(path: Path | None = None) -> Config:
 def _apply_toml(config: Config, data: dict[str, object]) -> None:
     """Apply TOML data to config, handling nested source configs."""
     config_fields = {f.name for f in dataclasses.fields(config)}
-    source_fields = {f.name for f in dataclasses.fields(SourceConfig)}
 
     for key, value in data.items():
         if key == "sources" and isinstance(value, dict):
@@ -240,6 +244,7 @@ def _apply_toml(config: Config, data: dict[str, object]) -> None:
                     continue
                 if isinstance(source_data, dict):
                     source_config = getattr(config, source_name)
+                    source_fields = {f.name for f in dataclasses.fields(source_config)}
                     for sk, sv in source_data.items():
                         if sk in source_fields:
                             setattr(source_config, sk, sv)

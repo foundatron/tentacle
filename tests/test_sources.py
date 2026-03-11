@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import unittest
 import urllib.error
+import urllib.parse
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, call, patch
 
-from tentacle.sources.arxiv import _PAGE_SIZE, ArxivAdapter
+from tentacle.sources.arxiv import PAGE_SIZE, ArxivAdapter
 from tentacle.sources.hackernews import HackerNewsAdapter
 from tentacle.sources.rss import RSSAdapter
 from tentacle.sources.semantic_scholar import SemanticScholarAdapter
@@ -126,7 +127,7 @@ class TestArxivAdapter(unittest.TestCase):
     def test_pagination_multiple_pages(
         self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock
     ) -> None:
-        page1 = _make_arxiv_feed(_PAGE_SIZE)  # full page → more to fetch
+        page1 = _make_arxiv_feed(PAGE_SIZE)  # full page → more to fetch
         page2 = _make_arxiv_feed(3)  # partial page → signals end
 
         mock_urlopen_fn.side_effect = [
@@ -136,16 +137,16 @@ class TestArxivAdapter(unittest.TestCase):
 
         adapter = ArxivAdapter()
         # Request more than one page's worth so pagination is triggered
-        articles = adapter.fetch(["query"], max_results=_PAGE_SIZE + 50)
+        articles = adapter.fetch(["query"], max_results=PAGE_SIZE + 50)
 
-        assert len(articles) == _PAGE_SIZE + 3
+        assert len(articles) == PAGE_SIZE + 3
         assert mock_urlopen_fn.call_count == 2
 
         # Verify start params in URLs
         url1 = mock_urlopen_fn.call_args_list[0][0][0]
         url2 = mock_urlopen_fn.call_args_list[1][0][0]
         assert "start=0" in url1
-        assert f"start={_PAGE_SIZE}" in url2
+        assert f"start={PAGE_SIZE}" in url2
 
         # Sleep called once between pages
         mock_sleep.assert_called_once_with(1)
@@ -210,21 +211,24 @@ class TestArxivAdapter(unittest.TestCase):
         assert articles == []
         assert any("arXiv query failed" in m for m in log.output)
 
+    @patch("tentacle.sources.arxiv.datetime")
     @patch("tentacle.sources.arxiv.urllib.request.urlopen")
-    def test_date_range_query_param(self, mock_urlopen_fn: MagicMock) -> None:
+    def test_date_range_query_param(
+        self, mock_urlopen_fn: MagicMock, mock_datetime: MagicMock
+    ) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(_make_arxiv_feed(0))
+        fixed_now = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
+        mock_datetime.now.return_value = fixed_now
+
         adapter = ArxivAdapter(days_back=7)
 
-        now = datetime.now(UTC)
-        start_date = now - timedelta(days=7)
+        start_date = fixed_now - timedelta(days=7)
         expected_start = start_date.strftime("%Y%m%d") + "0000"
-        expected_end = now.strftime("%Y%m%d") + "2359"
+        expected_end = fixed_now.strftime("%Y%m%d") + "2359"
 
         adapter.fetch(["query"], max_results=10)
 
         url = mock_urlopen_fn.call_args[0][0]
-        import urllib.parse
-
         parsed = urllib.parse.urlparse(url)
         params = urllib.parse.parse_qs(parsed.query)
         search_query = params["search_query"][0]

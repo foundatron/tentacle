@@ -21,7 +21,7 @@ scan_budget = 2.0
 monthly_budget = 10.0
 
 # LLM models
-filter_model = "claude-haiku-4-5-20251001"
+filter_model = "claude-haiku-4-5"
 analyze_model = "claude-sonnet-4-6"
 
 # Database

@@ -191,7 +191,7 @@ class TestCmdRun(unittest.TestCase):
             cost = 0.50 if call_count == 1 else 0.30
             captured["tracker"].add(
                 UsageRecord(
-                    model="claude-haiku-4-5-20251001",
+                    model="claude-haiku-4-5",
                     input_tokens=10,
                     output_tokens=10,
                     cost_usd=cost,

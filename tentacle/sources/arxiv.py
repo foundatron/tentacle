@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 _ARXIV_API = "http://export.arxiv.org/api/query"
 _ATOM_NS = "{http://www.w3.org/2005/Atom}"
-_PAGE_SIZE = 100
+PAGE_SIZE = 100
 
 
 class ArxivAdapter(SourceAdapter):
@@ -52,12 +52,16 @@ class ArxivAdapter(SourceAdapter):
     def _fetch_url(self, url: str) -> bytes:
         """Fetch URL with retry on 503 errors (exponential backoff: 1s, 2s, 4s)."""
         max_retries = 3
+        last_exc: urllib.error.HTTPError | None = None
         for attempt in range(max_retries + 1):
             try:
                 with urllib.request.urlopen(url, timeout=30) as resp:
-                    return bytes(resp.read())
+                    return resp.read()  # type: ignore[no-any-return]
             except urllib.error.HTTPError as e:
-                if e.code == 503 and attempt < max_retries:
+                if e.code != 503:
+                    raise
+                last_exc = e
+                if attempt < max_retries:
                     delay = 2**attempt
                     logger.warning(
                         "arXiv returned 503, retrying in %ds (attempt %d/%d)",
@@ -66,9 +70,7 @@ class ArxivAdapter(SourceAdapter):
                         max_retries,
                     )
                     time.sleep(delay)
-                else:
-                    raise
-        raise RuntimeError("Unreachable")  # pragma: no cover
+        raise last_exc  # type: ignore[misc]  # always set when 503 retries exhausted
 
     def _search(self, query: str, max_results: int) -> list[Article]:
         search_query = f"all:{query}"
@@ -83,7 +85,7 @@ class ArxivAdapter(SourceAdapter):
         start = 0
 
         while len(articles) < max_results:
-            page_size = min(_PAGE_SIZE, max_results - len(articles))
+            page_size = min(PAGE_SIZE, max_results - len(articles))
             params = urllib.parse.urlencode(
                 {
                     "search_query": search_query,
@@ -108,7 +110,7 @@ class ArxivAdapter(SourceAdapter):
                     if article:
                         articles.append(article)
                 except Exception:
-                    logger.warning("arXiv: skipping malformed entry")
+                    logger.warning("arXiv: skipping malformed entry", exc_info=True)
 
             start += page_size
 
