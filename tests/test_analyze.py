@@ -44,7 +44,7 @@ class TestAnalyze(unittest.TestCase):
         cost_tracker = CostTracker()
         cost_tracker.add(
             UsageRecord(
-                model="claude-sonnet-4-5-20250514",
+                model="claude-sonnet-4-6",
                 input_tokens=500,
                 output_tokens=300,
                 cost_usd=0.01,
@@ -59,7 +59,7 @@ class TestAnalyze(unittest.TestCase):
             client,
             _make_article(),
             "OctopusGarden context here",
-            model="claude-sonnet-4-5-20250514",
+            model="claude-sonnet-4-6",
             relevance_score=0.85,
             relevance_reasoning="Relevant",
         )
@@ -80,7 +80,7 @@ class TestAnalyze(unittest.TestCase):
             client,
             _make_article(),
             "context",
-            model="claude-sonnet-4-5-20250514",
+            model="claude-sonnet-4-6",
             relevance_score=0.5,
             relevance_reasoning="test",
         )
@@ -109,7 +109,7 @@ class TestAnalyze(unittest.TestCase):
         cost_tracker = CostTracker()
         cost_tracker.add(
             UsageRecord(
-                model="claude-sonnet-4-5-20250514",
+                model="claude-sonnet-4-6",
                 input_tokens=500,
                 output_tokens=300,
                 cost_usd=0.01,
@@ -124,7 +124,7 @@ class TestAnalyze(unittest.TestCase):
             client,
             _make_article(),
             "context",
-            model="claude-sonnet-4-5-20250514",
+            model="claude-sonnet-4-6",
             relevance_score=0.8,
             relevance_reasoning="test",
         )
@@ -136,7 +136,7 @@ class TestAnalyze(unittest.TestCase):
         cost_tracker = CostTracker()
         cost_tracker.add(
             UsageRecord(
-                model="claude-sonnet-4-5-20250514",
+                model="claude-sonnet-4-6",
                 input_tokens=100,
                 output_tokens=100,
                 cost_usd=0.001,
@@ -151,7 +151,7 @@ class TestAnalyze(unittest.TestCase):
             client,
             _make_article(),
             "context",
-            model="claude-sonnet-4-5-20250514",
+            model="claude-sonnet-4-6",
             relevance_score=0.5,
             relevance_reasoning="test",
         )

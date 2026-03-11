@@ -66,7 +66,7 @@ class TestCompleteWithTools(unittest.TestCase):
         client._client.messages.create.return_value = _make_tool_use_response(expected)  # type: ignore[attr-defined]
 
         result = client.complete_with_tools(
-            model="claude-sonnet-4-5-20250514",
+            model="claude-sonnet-4-6",
             system="sys",
             messages=[{"role": "user", "content": "analyze this"}],
             tools=[],  # type: ignore[arg-type]
@@ -81,7 +81,7 @@ class TestCompleteWithTools(unittest.TestCase):
 
         with self.assertRaises(ValueError, msg="No tool_use block in response"):
             client.complete_with_tools(
-                model="claude-sonnet-4-5-20250514",
+                model="claude-sonnet-4-6",
                 system="sys",
                 messages=[{"role": "user", "content": "go"}],
                 tools=[],  # type: ignore[arg-type]
@@ -93,7 +93,7 @@ class TestCompleteWithTools(unittest.TestCase):
         client._client.messages.create.return_value = _make_tool_use_response({"x": 1})  # type: ignore[attr-defined]
 
         client.complete_with_tools(
-            model="claude-sonnet-4-5-20250514",
+            model="claude-sonnet-4-6",
             system="sys",
             messages=[{"role": "user", "content": "go"}],
             tools=[],  # type: ignore[arg-type]
@@ -113,7 +113,7 @@ class TestCompleteWithTools(unittest.TestCase):
 
         with self.assertRaises(BudgetExceededError) as ctx:
             client.complete_with_tools(
-                model="claude-sonnet-4-5-20250514",
+                model="claude-sonnet-4-6",
                 system="sys",
                 messages=[],
                 tools=[],  # type: ignore[arg-type]
@@ -127,7 +127,7 @@ class TestCompleteWithTools(unittest.TestCase):
 
         with self.assertRaises(BudgetExceededError) as ctx2:
             client2.complete_with_tools(
-                model="claude-sonnet-4-5-20250514",
+                model="claude-sonnet-4-6",
                 system="sys",
                 messages=[],
                 tools=[],  # type: ignore[arg-type]
@@ -143,7 +143,7 @@ class TestCompleteWithTools(unittest.TestCase):
 
         with self.assertRaises(BudgetExceededError) as ctx:
             client.complete_with_tools(
-                model="claude-sonnet-4-5-20250514",
+                model="claude-sonnet-4-6",
                 system="sys",
                 messages=[],
                 tools=[],  # type: ignore[arg-type]
@@ -159,7 +159,7 @@ class TestCompleteAfterRefactor(unittest.TestCase):
         client._client.messages.create.return_value = _make_text_response("result text")  # type: ignore[attr-defined]
 
         result = client.complete(
-            model="claude-sonnet-4-5-20250514",
+            model="claude-sonnet-4-6",
             system="system prompt",
             messages=[{"role": "user", "content": "hello"}],
         )

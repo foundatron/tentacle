@@ -36,8 +36,8 @@ scan_budget = 2.0
 monthly_budget = 10.0
 
 # LLM models
-filter_model = "claude-haiku-4-5-20251001"
-analyze_model = "claude-sonnet-4-5-20250514"
+filter_model = "claude-haiku-4-5"
+analyze_model = "claude-sonnet-4-6"
 
 # Database
 db_path = "~/.local/share/tentacle/tentacle.db"
@@ -55,6 +55,8 @@ queries = [
     "automated software testing LLM",
 ]
 max_results = 50
+# days_back = 30
+# sort_order = "descending"
 
 [sources.semantic_scholar]
 enabled = true
@@ -96,6 +98,14 @@ class SourceConfig:
 
 
 @dataclasses.dataclass
+class ArxivSourceConfig(SourceConfig):
+    """arXiv-specific source configuration."""
+
+    days_back: int | None = None
+    sort_order: str = "descending"
+
+
+@dataclasses.dataclass
 class Config:
     """Application configuration."""
 
@@ -117,14 +127,14 @@ class Config:
     monthly_budget: float = 10.0
 
     # LLM models
-    filter_model: str = "claude-haiku-4-5-20251001"
-    analyze_model: str = "claude-sonnet-4-5-20250514"
+    filter_model: str = "claude-haiku-4-5"
+    analyze_model: str = "claude-sonnet-4-6"
 
     # Database
     db_path: str = "~/.local/share/tentacle/tentacle.db"
 
     # Sources
-    arxiv: SourceConfig = dataclasses.field(default_factory=SourceConfig)
+    arxiv: ArxivSourceConfig = dataclasses.field(default_factory=ArxivSourceConfig)
     semantic_scholar: SourceConfig = dataclasses.field(default_factory=SourceConfig)
     hackernews: SourceConfig = dataclasses.field(default_factory=SourceConfig)
     rss: SourceConfig = dataclasses.field(default_factory=SourceConfig)
@@ -189,6 +199,14 @@ def validate(config: Config) -> None:
                 f"sources.{source_name}.max_results must be >= 1, got {source_config.max_results}"
             )
 
+    if config.arxiv.days_back is not None and config.arxiv.days_back < 1:
+        raise ConfigError(f"sources.arxiv.days_back must be >= 1, got {config.arxiv.days_back}")
+    if config.arxiv.sort_order not in ("ascending", "descending"):
+        raise ConfigError(
+            f"sources.arxiv.sort_order must be 'ascending' or 'descending', "
+            f"got {config.arxiv.sort_order!r}"
+        )
+
 
 def load_config(path: Path | None = None) -> Config:
     """Load configuration from TOML file, with env var overrides."""
@@ -211,7 +229,6 @@ def load_config(path: Path | None = None) -> Config:
 def _apply_toml(config: Config, data: dict[str, object]) -> None:
     """Apply TOML data to config, handling nested source configs."""
     config_fields = {f.name for f in dataclasses.fields(config)}
-    source_fields = {f.name for f in dataclasses.fields(SourceConfig)}
 
     for key, value in data.items():
         if key == "sources" and isinstance(value, dict):
@@ -227,6 +244,7 @@ def _apply_toml(config: Config, data: dict[str, object]) -> None:
                     continue
                 if isinstance(source_data, dict):
                     source_config = getattr(config, source_name)
+                    source_fields = {f.name for f in dataclasses.fields(source_config)}
                     for sk, sv in source_data.items():
                         if sk in source_fields:
                             setattr(source_config, sk, sv)

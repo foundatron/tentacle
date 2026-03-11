@@ -36,7 +36,7 @@ def _make_analysis() -> Analysis:
         article_id="test123",
         relevance_score=0.85,
         maturity_score=4,
-        model_used="claude-sonnet-4-5-20250514",
+        model_used="claude-sonnet-4-6",
         analyzed_at=datetime(2025, 1, 1, tzinfo=UTC),
         suggested_type="feat",
         suggested_title="feat(attractor): add thing",

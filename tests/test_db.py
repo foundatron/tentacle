@@ -42,7 +42,7 @@ def _make_analysis(article_id: str = "abc123") -> Analysis:
         article_id=article_id,
         relevance_score=0.85,
         maturity_score=4,
-        model_used="claude-haiku-4-5-20251001",
+        model_used="claude-haiku-4-5",
         analyzed_at=datetime(2025, 1, 1, tzinfo=UTC),
         relevance_reasoning="Highly relevant",
         key_insights=["insight1", "insight2"],

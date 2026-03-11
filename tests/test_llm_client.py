@@ -17,7 +17,7 @@ def _make_client(**kwargs: object) -> LLMClient:
 def _add_cost(client: LLMClient, cost: float) -> None:
     client.costs.add(
         UsageRecord(
-            model="claude-haiku-4-5-20251001",
+            model="claude-haiku-4-5",
             input_tokens=100,
             output_tokens=100,
             cost_usd=cost,
@@ -43,7 +43,7 @@ class TestLLMClientBudget(unittest.TestCase):
 
         with self.assertRaises(BudgetExceededError) as ctx:
             client.complete(
-                model="claude-haiku-4-5-20251001",
+                model="claude-haiku-4-5",
                 system="sys",
                 messages=[{"role": "user", "content": "hi"}],
             )
@@ -60,7 +60,7 @@ class TestLLMClientBudget(unittest.TestCase):
 
         with self.assertRaises(BudgetExceededError) as ctx:
             client.complete(
-                model="claude-haiku-4-5-20251001",
+                model="claude-haiku-4-5",
                 system="sys",
                 messages=[{"role": "user", "content": "hi"}],
             )
@@ -76,7 +76,7 @@ class TestLLMClientBudget(unittest.TestCase):
 
         # Should NOT raise — DB failure is logged and ignored
         result = client.complete(
-            model="claude-haiku-4-5-20251001",
+            model="claude-haiku-4-5",
             system="sys",
             messages=[{"role": "user", "content": "hi"}],
         )
@@ -89,7 +89,7 @@ class TestLLMClientBudget(unittest.TestCase):
 
         # 0.0 means no limit — should proceed without raising
         result = client.complete(
-            model="claude-haiku-4-5-20251001",
+            model="claude-haiku-4-5",
             system="sys",
             messages=[{"role": "user", "content": "hi"}],
         )
@@ -102,7 +102,7 @@ class TestLLMClientBudget(unittest.TestCase):
 
         with self.assertRaises(BudgetExceededError):
             client.complete(
-                model="claude-haiku-4-5-20251001",
+                model="claude-haiku-4-5",
                 system="sys",
                 messages=[{"role": "user", "content": "hi"}],
             )
@@ -113,7 +113,7 @@ class TestLLMClientBudget(unittest.TestCase):
         _mock_api_response(client)
 
         result = client.complete(
-            model="claude-haiku-4-5-20251001",
+            model="claude-haiku-4-5",
             system="sys",
             messages=[{"role": "user", "content": "hi"}],
         )
@@ -125,7 +125,7 @@ class TestLLMClientBudget(unittest.TestCase):
         _mock_api_response(client)
 
         result = client.complete(
-            model="claude-haiku-4-5-20251001",
+            model="claude-haiku-4-5",
             system="sys",
             messages=[{"role": "user", "content": "hi"}],
         )

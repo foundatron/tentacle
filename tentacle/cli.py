@@ -45,7 +45,17 @@ def _get_sources(config: Config) -> list[tuple[str, list[str], int, SourceAdapte
     """Return enabled sources as (name, queries, max_results, adapter) tuples."""
     sources: list[tuple[str, list[str], int, SourceAdapter]] = []
     if config.arxiv.enabled:
-        sources.append(("arxiv", config.arxiv.queries, config.arxiv.max_results, ArxivAdapter()))
+        sources.append(
+            (
+                "arxiv",
+                config.arxiv.queries,
+                config.arxiv.max_results,
+                ArxivAdapter(
+                    days_back=config.arxiv.days_back,
+                    sort_order=config.arxiv.sort_order,
+                ),
+            )
+        )
     if config.semantic_scholar.enabled:
         sources.append(
             (
