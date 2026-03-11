@@ -62,7 +62,11 @@ def _get_sources(config: Config) -> list[tuple[str, list[str], int, SourceAdapte
                 "semantic_scholar",
                 config.semantic_scholar.queries,
                 config.semantic_scholar.max_results,
-                SemanticScholarAdapter(),
+                SemanticScholarAdapter(
+                    api_key=config.semantic_scholar.s2_api_key,
+                    min_citations=config.semantic_scholar.min_citations,
+                    days_back=config.semantic_scholar.days_back,
+                ),
             )
         )
     if config.hackernews.enabled:

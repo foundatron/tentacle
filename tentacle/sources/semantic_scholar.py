@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from tentacle.dedup import fingerprint
 from tentacle.models import Article
@@ -19,6 +21,16 @@ _S2_API = "https://api.semanticscholar.org/graph/v1/paper/search"
 
 class SemanticScholarAdapter(SourceAdapter):
     """Fetch papers from the Semantic Scholar API."""
+
+    def __init__(
+        self,
+        api_key: str = "",
+        min_citations: int = 0,
+        days_back: int | None = None,
+    ) -> None:
+        self._api_key = api_key
+        self._min_citations = min_citations
+        self._days_back = days_back
 
     @property
     def name(self) -> str:
@@ -37,22 +49,78 @@ class SemanticScholarAdapter(SourceAdapter):
 
         return articles[:max_results]
 
+    def _fetch_with_retry(self, req: urllib.request.Request) -> bytes | None:
+        """Fetch URL with retry on 429. Non-retryable errors are logged and return None."""
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    return resp.read()  # type: ignore[no-any-return]
+            except urllib.error.HTTPError as e:
+                if e.code != 429:
+                    logger.error("Semantic Scholar HTTP error %d: %s", e.code, e)
+                    return None
+                # 429 rate-limit handling
+                retry_after = 1
+                raw = e.headers.get("Retry-After")
+                if raw is not None:
+                    try:
+                        retry_after = int(raw)
+                    except ValueError:
+                        logger.debug(
+                            "Retry-After header is not an integer (%r), defaulting to 1s", raw
+                        )
+                if attempt < max_retries:
+                    logger.warning(
+                        "Semantic Scholar rate-limited (429), retrying in %ds (attempt %d/%d)",
+                        retry_after,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    time.sleep(retry_after)
+                else:
+                    logger.error("Semantic Scholar rate-limited (429), max retries exhausted")
+            except urllib.error.URLError as e:
+                logger.error("Semantic Scholar network error: %s", e)
+                return None
+        return None
+
     def _search(self, query: str, limit: int) -> list[Article]:
-        params = urllib.parse.urlencode(
-            {
-                "query": query,
-                "limit": min(limit, 100),
-                "fields": "title,authors,abstract,url,externalIds,publicationDate,openAccessPdf",
-            }
-        )
+        query_params: dict[str, str | int] = {
+            "query": query,
+            "limit": min(limit, 100),
+            "fields": (
+                "title,authors,abstract,url,externalIds,publicationDate,openAccessPdf,citationCount"
+            ),
+        }
+
+        if self._days_back is not None:
+            now = datetime.now(UTC)
+            start_date = now - timedelta(days=self._days_back)
+            query_params["publicationDateOrYear"] = (
+                f"{start_date.strftime('%Y-%m-%d')}:{now.strftime('%Y-%m-%d')}"
+            )
+
+        params = urllib.parse.urlencode(query_params)
         url = f"{_S2_API}?{params}"
 
-        req = urllib.request.Request(url, headers={"User-Agent": "tentacle/0.1"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
+        headers: dict[str, str] = {"User-Agent": "tentacle/0.1"}
+        if self._api_key:
+            headers["x-api-key"] = self._api_key
+        req = urllib.request.Request(url, headers=headers)
 
+        data_bytes = self._fetch_with_retry(req)
+        if data_bytes is None:
+            return []
+
+        data = json.loads(data_bytes)
         articles: list[Article] = []
         for paper in data.get("data", []):
+            citation_count = paper.get("citationCount")
+            if citation_count is None:
+                citation_count = 0
+            if citation_count < self._min_citations:
+                continue
             article = self._parse_paper(paper)
             if article:
                 articles.append(article)
