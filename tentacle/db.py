@@ -25,6 +25,14 @@ class Stats(TypedDict):
     latest_scan_at: str | None
 
 
+class MonthlyCost(TypedDict):
+    """Cost summary for a calendar month."""
+
+    total_cost: float
+    scan_count: int
+    avg_cost_per_scan: float
+
+
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS articles (
     id              TEXT PRIMARY KEY,
@@ -317,7 +325,7 @@ class Store:
         articles_new: int = 0,
         articles_relevant: int = 0,
         issues_created: int = 0,
-        total_cost_usd: float = 0.0,
+        total_cost_usd: float = 0.0,  # per-run delta cost, NOT cumulative monthly total
         status: str = "complete",
     ) -> None:
         now = datetime.now(UTC)
@@ -344,6 +352,33 @@ class Store:
             "SELECT * FROM scan_runs ORDER BY started_at DESC LIMIT ?", (limit,)
         ).fetchall()
         return [_row_to_scan_run(r) for r in rows]
+
+    def get_monthly_cost(self, year: int, month: int) -> MonthlyCost:
+        """Return cost totals for completed scan_runs started in the given UTC month."""
+        start = datetime(year, month, 1, tzinfo=UTC)
+        if month == 12:
+            end = datetime(year + 1, 1, 1, tzinfo=UTC)
+        else:
+            end = datetime(year, month + 1, 1, tzinfo=UTC)
+
+        row = self._conn.execute(
+            """SELECT COALESCE(SUM(total_cost_usd), 0.0), COUNT(*)
+               FROM scan_runs
+               WHERE status != 'running'
+                 AND started_at >= ?
+                 AND started_at < ?""",
+            (_iso(start), _iso(end)),
+        ).fetchone()
+
+        total_cost: float = row[0]
+        scan_count: int = row[1]
+        avg_cost = total_cost / scan_count if scan_count > 0 else 0.0
+
+        return MonthlyCost(
+            total_cost=total_cost,
+            scan_count=scan_count,
+            avg_cost_per_scan=avg_cost,
+        )
 
     def get_stats(self) -> Stats:
         row = self._conn.execute(

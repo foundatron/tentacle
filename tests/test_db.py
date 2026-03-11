@@ -5,6 +5,8 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime
 
+import pytest
+
 from tentacle.db import Store
 from tentacle.models import Analysis, Article, DecayEntry, Issue
 
@@ -340,6 +342,80 @@ class TestStore(unittest.TestCase):
         assert got_analysis is not None
         assert got_analysis.key_insights is None
         assert got_analysis.applicable_scopes is None
+
+    def test_get_monthly_cost_no_runs(self) -> None:
+        result = self.store.get_monthly_cost(2025, 1)
+        assert result["total_cost"] == 0.0
+        assert result["scan_count"] == 0
+        assert result["avg_cost_per_scan"] == 0.0
+
+    def test_get_monthly_cost_single_month(self) -> None:
+        # Insert two runs and pin their started_at to different months
+        run1 = self.store.start_scan_run("arxiv")
+        self.store.finish_scan_run(run1, total_cost_usd=1.50)
+        self.store._conn.execute(
+            "UPDATE scan_runs SET started_at = '2025-01-15T00:00:00+00:00' WHERE id = ?",
+            (run1,),
+        )
+
+        run2 = self.store.start_scan_run("hn")
+        self.store.finish_scan_run(run2, total_cost_usd=0.75)
+        self.store._conn.execute(
+            "UPDATE scan_runs SET started_at = '2025-02-15T12:00:00+00:00' WHERE id = ?",
+            (run2,),
+        )
+        self.store._conn.commit()
+
+        jan = self.store.get_monthly_cost(2025, 1)
+        assert jan["total_cost"] == pytest.approx(1.50)
+        assert jan["scan_count"] == 1
+        assert jan["avg_cost_per_scan"] == pytest.approx(1.50)
+
+        feb = self.store.get_monthly_cost(2025, 2)
+        assert feb["total_cost"] == pytest.approx(0.75)
+        assert feb["scan_count"] == 1
+
+    def test_get_monthly_cost_excludes_running(self) -> None:
+        # A finished run
+        run1 = self.store.start_scan_run("arxiv")
+        self.store.finish_scan_run(run1, total_cost_usd=1.0)
+
+        # A still-running scan (no finish call — status stays 'running')
+        self.store.start_scan_run("hn")
+
+        result = self.store.get_monthly_cost(2025, 1)
+        # Only the finished run is counted; adjust started_at for both to Jan 2025
+        # (start_scan_run uses datetime.now(UTC) which in tests may not be 2025-01)
+        # So query whatever month "now" falls in
+        now = datetime.now(UTC)
+        result = self.store.get_monthly_cost(now.year, now.month)
+        assert result["scan_count"] == 1
+        assert result["total_cost"] == pytest.approx(1.0)
+
+    def test_get_monthly_cost_december_rollover(self) -> None:
+        # Insert a run in Dec 2025 and Jan 2026 and verify isolation
+        run_dec = self.store.start_scan_run("arxiv")
+        self.store.finish_scan_run(run_dec, total_cost_usd=3.00)
+        self.store._conn.execute(
+            "UPDATE scan_runs SET started_at = '2025-12-15T00:00:00+00:00' WHERE id = ?",
+            (run_dec,),
+        )
+
+        run_jan = self.store.start_scan_run("hn")
+        self.store.finish_scan_run(run_jan, total_cost_usd=1.00)
+        self.store._conn.execute(
+            "UPDATE scan_runs SET started_at = '2026-01-05T00:00:00+00:00' WHERE id = ?",
+            (run_jan,),
+        )
+        self.store._conn.commit()
+
+        dec = self.store.get_monthly_cost(2025, 12)
+        assert dec["total_cost"] == pytest.approx(3.00)
+        assert dec["scan_count"] == 1
+
+        jan = self.store.get_monthly_cost(2026, 1)
+        assert jan["total_cost"] == pytest.approx(1.00)
+        assert jan["scan_count"] == 1
 
 
 if __name__ == "__main__":

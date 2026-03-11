@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import anthropic
@@ -19,6 +20,25 @@ _PRICING: dict[str, tuple[float, float]] = {
 
 _CACHE_WRITE_MULTIPLIER = 1.25
 _CACHE_READ_MULTIPLIER = 0.1
+
+
+class BudgetExceededError(Exception):
+    """Raised when a cost budget limit has been reached.
+
+    The scan budget check fires both before *and* after each API call.  The
+    pre-call check prevents calls when the budget is already exhausted; the
+    post-call check catches the case where a single expensive call overshoots
+    the limit.  Both are best-effort soft ceilings — one call may exceed the
+    budget before the post-call guard triggers.
+    """
+
+    def __init__(self, current_cost: float, limit: float, budget_type: str) -> None:
+        self.current_cost = current_cost
+        self.limit = limit
+        self.budget_type = budget_type
+        super().__init__(
+            f"{budget_type} budget exceeded: current=${current_cost:.4f}, limit=${limit:.4f}"
+        )
 
 
 @dataclass
@@ -75,9 +95,27 @@ def _estimate_cost(
 class LLMClient:
     """Thin wrapper around the Anthropic SDK with cost tracking."""
 
-    def __init__(self, api_key: str, cost_tracker: CostTracker | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        cost_tracker: CostTracker | None = None,
+        *,
+        scan_budget: float = 0.0,
+        monthly_budget: float = 0.0,
+        get_monthly_cost: Callable[[], float] | None = None,
+    ) -> None:
+        if scan_budget < 0:
+            logger.warning("scan_budget=%s is negative; treating as no limit", scan_budget)
+        if monthly_budget < 0:
+            logger.warning("monthly_budget=%s is negative; treating as no limit", monthly_budget)
         self._client = anthropic.Anthropic(api_key=api_key)
         self.costs = cost_tracker or CostTracker()
+        self._scan_budget = scan_budget
+        self._monthly_budget = monthly_budget
+        self._get_monthly_cost = get_monthly_cost
+        # Cached monthly base cost (costs accrued before this scan started).
+        # Fetched once on first use to avoid a SQL round-trip per LLM call.
+        self._monthly_base_cost: float | None = None
 
     def complete(
         self,
@@ -89,6 +127,26 @@ class LLMClient:
         temperature: float = 0.0,
     ) -> str:
         """Send a completion request and return the text response."""
+        if self._scan_budget > 0 and self.costs.total_cost >= self._scan_budget:
+            raise BudgetExceededError(self.costs.total_cost, self._scan_budget, "scan")
+
+        if self._monthly_budget > 0 and self._get_monthly_cost is not None:
+            try:
+                # Fetch the pre-scan monthly base cost once and cache it.
+                # It only changes if another process updates the DB concurrently,
+                # which is extremely unlikely for a single daily cron job.
+                if self._monthly_base_cost is None:
+                    self._monthly_base_cost = self._get_monthly_cost()
+                total_monthly = self._monthly_base_cost + self.costs.total_cost
+                if total_monthly >= self._monthly_budget:
+                    raise BudgetExceededError(total_monthly, self._monthly_budget, "monthly")
+            except BudgetExceededError:
+                raise
+            except Exception:
+                logger.warning(
+                    "Failed to check monthly cost; proceeding without monthly budget enforcement"
+                )
+
         response = self._client.messages.create(
             model=model,
             system=system,
@@ -129,5 +187,9 @@ class LLMClient:
             cache_read,
             record.cost_usd,
         )
+
+        # Post-call scan budget check: catches overshoot from a single expensive call.
+        if self._scan_budget > 0 and self.costs.total_cost >= self._scan_budget:
+            raise BudgetExceededError(self.costs.total_cost, self._scan_budget, "scan")
 
         return text

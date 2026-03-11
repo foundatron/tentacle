@@ -36,6 +36,7 @@ class Config:
     max_issues_per_cycle: int = 3
     min_maturity_for_issue: int = 3
     relevance_threshold: float = 0.3
+    scan_budget: float = 2.0
     monthly_budget: float = 10.0
 
     # LLM models

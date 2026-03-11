@@ -14,7 +14,7 @@ from tentacle.db import Store
 from tentacle.decay import apply_decay
 from tentacle.issues import create_issue
 from tentacle.llm.analyze import analyze_article
-from tentacle.llm.client import CostTracker, LLMClient
+from tentacle.llm.client import BudgetExceededError, CostTracker, LLMClient
 from tentacle.llm.filter import filter_article
 from tentacle.sources.arxiv import ArxivAdapter
 from tentacle.sources.base import SourceAdapter
@@ -71,12 +71,19 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
     """Run the full scan pipeline."""
     store = _get_store(config)
     cost_tracker = CostTracker()
+    now = datetime.now(UTC)
 
     if not config.anthropic_api_key:
         logger.error("ANTHROPIC_API_KEY not set")
         sys.exit(1)
 
-    client = LLMClient(config.anthropic_api_key, cost_tracker)
+    client = LLMClient(
+        config.anthropic_api_key,
+        cost_tracker,
+        scan_budget=config.scan_budget,
+        monthly_budget=config.monthly_budget,
+        get_monthly_cost=lambda: store.get_monthly_cost(now.year, now.month)["total_cost"],
+    )
     context = fetch_context()
     sources = _get_sources(config)
 
@@ -93,6 +100,7 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
             logger.info("Skipping %s: no queries configured", source_name)
             continue
 
+        cost_before = cost_tracker.total_cost
         run_id = store.start_scan_run(source_name)
         logger.info("Scanning %s...", source_name)
 
@@ -155,14 +163,20 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
                         issues_created += 1
                         total_issues += 1
 
+            source_cost = cost_tracker.total_cost - cost_before
             store.finish_scan_run(
                 run_id,
                 articles_found=articles_found,
                 articles_new=articles_new,
                 articles_relevant=articles_relevant,
                 issues_created=issues_created,
-                total_cost_usd=cost_tracker.total_cost,
+                total_cost_usd=source_cost,
             )
+
+        except BudgetExceededError as e:
+            logger.warning("Budget limit reached during %s: %s", source_name, e)
+            store.finish_scan_run(run_id, status="budget_exceeded")
+            break
 
         except Exception:
             logger.exception("Error scanning %s", source_name)
@@ -195,10 +209,20 @@ def cmd_review_backlog(args: argparse.Namespace, config: Config) -> None:
 def cmd_status(args: argparse.Namespace, config: Config) -> None:
     """Show current status."""
     store = _get_store(config)
+    now = datetime.now(UTC)
+
+    # Monthly cost summary
+    monthly = store.get_monthly_cost(now.year, now.month)
+    print(f"Monthly cost ({now.strftime('%Y-%m')}):")
+    print(f"  Total:  ${monthly['total_cost']:.4f}")
+    print(f"  Scans:  {monthly['scan_count']} (avg ${monthly['avg_cost_per_scan']:.4f}/scan)")
+    if config.monthly_budget > 0:
+        remaining = config.monthly_budget - monthly["total_cost"]
+        print(f"  Budget: ${config.monthly_budget:.2f} (${remaining:.4f} remaining)")
 
     # Recent scan runs
     runs = store.get_recent_scan_runs(5)
-    print("Recent scans:")
+    print("\nRecent scans:")
     for run in runs:
         finished = run.finished_at.strftime("%Y-%m-%d %H:%M") if run.finished_at else "running"
         print(
