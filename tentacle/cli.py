@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 import sys
+import threading
 import time
+import types
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -294,9 +297,22 @@ def cmd_status(args: argparse.Namespace, config: Config) -> None:
     store = _get_store(config)
     now = datetime.now(UTC)
 
-    # Monthly cost summary
+    # Catalog summary
+    summary = store.get_status_summary()
+    print(f"Articles: {summary['total_articles']}  Analyses: {summary['total_analyses']}")
+    tiers = summary["relevance_tiers"]
+    print(f"Relevance: high={tiers['high']} medium={tiers['medium']} low={tiers['low']}")
+    print(f"Issues: open={summary['open_issues']} closed={summary['closed_issues']}")
+
+    # Monthly costs (last 3 months from summary)
+    if summary["monthly_costs"]:
+        print("\nMonthly costs (last 3 months):")
+        for month_data in summary["monthly_costs"]:
+            print(f"  {month_data['month']}  ${month_data['cost']:.4f}")
+
+    # Current month cost + budget
     monthly = store.get_monthly_cost(now.year, now.month)
-    print(f"Monthly cost ({now.strftime('%Y-%m')}):")
+    print(f"\nMonthly cost ({now.strftime('%Y-%m')}):")
     print(f"  Total:  ${monthly['total_cost']:.4f}")
     print(f"  Scans:  {monthly['scan_count']} (avg ${monthly['avg_cost_per_scan']:.4f}/scan)")
     if config.monthly_budget > 0:
@@ -328,6 +344,55 @@ def cmd_status(args: argparse.Namespace, config: Config) -> None:
     store.close()
 
 
+def cmd_daemon(args: argparse.Namespace, config: Config) -> None:
+    """Run scan pipeline and backlog review on a recurring interval."""
+    shutdown_event = threading.Event()
+
+    def _handle_signal(signum: int, frame: types.FrameType | None) -> None:
+        logger.info("Received signal %d; shutting down after current cycle", signum)
+        shutdown_event.set()
+
+    old_sigint = signal.signal(signal.SIGINT, _handle_signal)
+    old_sigterm = signal.signal(signal.SIGTERM, _handle_signal)
+
+    interval = args.interval if args.interval is not None else config.daemon_interval
+    logger.info(
+        "Starting daemon (interval=%ds). Signals set event; current cycle runs to completion.",
+        interval,
+    )
+
+    # Build a namespace with only the attributes that cmd_run and cmd_review_backlog
+    # actually use, so future flags added to their own subparsers don't cause
+    # AttributeError when called from the daemon context.
+    sub_args = argparse.Namespace(dry_run=args.dry_run)
+
+    try:
+        while True:
+            try:
+                cmd_run(sub_args, config)
+            except SystemExit as e:
+                logger.warning("cmd_run exited with code %s; continuing to next cycle", e.code)
+            except Exception:
+                logger.exception("Unexpected error in cmd_run; continuing to next cycle")
+
+            try:
+                cmd_review_backlog(sub_args, config)
+            except SystemExit as e:
+                logger.warning(
+                    "cmd_review_backlog exited with code %s; continuing to next cycle", e.code
+                )
+            except Exception:
+                logger.exception("Unexpected error in cmd_review_backlog; continuing to next cycle")
+
+            if shutdown_event.wait(interval):
+                break
+    finally:
+        signal.signal(signal.SIGINT, old_sigint)
+        signal.signal(signal.SIGTERM, old_sigterm)
+
+    logger.info("Daemon stopped gracefully")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="tentacle",
@@ -354,6 +419,22 @@ def main() -> None:
     # status
     subparsers.add_parser("status", help="Show current status")
 
+    # daemon
+    daemon_parser = subparsers.add_parser(
+        "daemon", help="Run scan pipeline on a recurring schedule"
+    )
+    daemon_parser.add_argument(
+        "--interval",
+        type=int,
+        default=None,
+        help="Seconds between scan cycles (overrides config daemon_interval)",
+    )
+    daemon_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Pass --dry-run through to scan and backlog review",
+    )
+
     args = parser.parse_args()
 
     _setup_logging(args.verbose)
@@ -366,5 +447,6 @@ def main() -> None:
             "run": cmd_run,
             "review-backlog": cmd_review_backlog,
             "status": cmd_status,
+            "daemon": cmd_daemon,
         }
         commands[args.command](args, config)

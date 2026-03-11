@@ -48,6 +48,9 @@ db_path = "~/.local/share/tentacle/tentacle.db"
 decay_grace_days = 30
 decay_interval_days = 60
 
+# Daemon settings
+daemon_interval = 3600  # seconds between daemon scan cycles
+
 [sources.arxiv]
 enabled = true
 queries = [
@@ -180,6 +183,9 @@ class Config:
     decay_grace_days: int = 30
     decay_interval_days: int = 60
 
+    # Daemon
+    daemon_interval: int = 3600  # seconds between daemon scan cycles
+
 
 def _check_type(value: object, expected: type | tuple[type, ...], name: str) -> None:
     """Raise ConfigError if value is not an instance of expected type(s)."""
@@ -208,6 +214,7 @@ def validate(config: Config) -> None:
     _check_type(config.issue_creation_delay, int, "issue_creation_delay")
     _check_type(config.decay_grace_days, int, "decay_grace_days")
     _check_type(config.decay_interval_days, int, "decay_interval_days")
+    _check_type(config.daemon_interval, int, "daemon_interval")
 
     if not (0.0 <= config.relevance_threshold <= 1.0):
         raise ConfigError(
@@ -229,6 +236,8 @@ def validate(config: Config) -> None:
         raise ConfigError(f"decay_grace_days must be >= 0, got {config.decay_grace_days}")
     if config.decay_interval_days < 1:
         raise ConfigError(f"decay_interval_days must be >= 1, got {config.decay_interval_days}")
+    if config.daemon_interval < 60:
+        raise ConfigError(f"daemon_interval must be >= 60, got {config.daemon_interval}")
     for source_name in ("arxiv", "semantic_scholar", "hackernews", "rss"):
         source_config: SourceConfig = getattr(config, source_name)
         if source_config.max_results < 1:

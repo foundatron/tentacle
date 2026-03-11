@@ -33,6 +33,32 @@ class MonthlyCost(TypedDict):
     avg_cost_per_scan: float
 
 
+class RelevanceTier(TypedDict):
+    """Counts of analyses bucketed by relevance score tier."""
+
+    high: int  # score >= 0.7
+    medium: int  # 0.3 <= score < 0.7
+    low: int  # score < 0.3
+
+
+class MonthlyEntry(TypedDict):
+    """Cost entry for a single calendar month."""
+
+    month: str  # YYYY-MM
+    cost: float
+
+
+class StatusSummary(TypedDict):
+    """Aggregate status summary for the catalog."""
+
+    total_articles: int
+    total_analyses: int
+    relevance_tiers: RelevanceTier
+    open_issues: int
+    closed_issues: int
+    monthly_costs: list[MonthlyEntry]  # last 3 months
+
+
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS articles (
     id              TEXT PRIMARY KEY,
@@ -447,6 +473,70 @@ class Store:
         if row is None:
             return None
         return _row_to_context_entry(row)
+
+    def get_status_summary(self) -> StatusSummary:
+        """Return aggregated status: counts, relevance tiers, issue states, monthly costs."""
+        # Article and analysis counts
+        counts = self._conn.execute(
+            """SELECT
+                (SELECT COUNT(*) FROM articles),
+                (SELECT COUNT(*) FROM analyses)"""
+        ).fetchone()
+        if counts is None:
+            raise RuntimeError("subselect query unexpectedly returned no row")
+
+        # Relevance tier bucketing: high >= 0.7, medium 0.3..0.7, low < 0.3
+        tiers = self._conn.execute(
+            """SELECT
+                COALESCE(SUM(CASE WHEN relevance_score >= 0.7 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN relevance_score >= 0.3
+                                   AND relevance_score < 0.7 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN relevance_score < 0.3 THEN 1 ELSE 0 END), 0)
+            FROM analyses"""
+        ).fetchone()
+        if tiers is None:
+            raise RuntimeError("COALESCE aggregate query unexpectedly returned no row")
+
+        # Issue counts by status
+        issue_rows = self._conn.execute(
+            "SELECT status, COUNT(*) FROM issues GROUP BY status"
+        ).fetchall()
+        issue_counts: dict[str, int] = {row[0]: row[1] for row in issue_rows}
+
+        # Monthly costs for last 3 months (current + 2 prior).
+        # Use zero-indexed total-month arithmetic to avoid the <= 0 edge case when
+        # the current month is January (1) or February (2).
+        now = datetime.now(UTC)
+        total_months = now.year * 12 + (now.month - 1) - 2  # zero-indexed, 2 months back
+        cutoff_year, cutoff_month_0 = divmod(total_months, 12)
+        cutoff = datetime(cutoff_year, cutoff_month_0 + 1, 1, tzinfo=UTC)
+
+        cost_rows = self._conn.execute(
+            """SELECT strftime('%Y-%m', started_at) as month,
+                      COALESCE(SUM(total_cost_usd), 0.0) as cost
+               FROM scan_runs
+               WHERE status != 'running' AND started_at >= ?
+               GROUP BY strftime('%Y-%m', started_at)
+               ORDER BY month DESC""",
+            (_iso(cutoff),),
+        ).fetchall()
+
+        monthly_costs: list[MonthlyEntry] = [
+            MonthlyEntry(month=row[0], cost=row[1]) for row in cost_rows
+        ]
+
+        return StatusSummary(
+            total_articles=counts[0],
+            total_analyses=counts[1],
+            relevance_tiers=RelevanceTier(
+                high=tiers[0],
+                medium=tiers[1],
+                low=tiers[2],
+            ),
+            open_issues=issue_counts.get("open", 0),
+            closed_issues=issue_counts.get("closed", 0),
+            monthly_costs=monthly_costs,
+        )
 
     def get_stats(self) -> Stats:
         row = self._conn.execute(
