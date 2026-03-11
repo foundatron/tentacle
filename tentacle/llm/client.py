@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 _PRICING: dict[str, tuple[float, float]] = {
     # (input_per_M, output_per_M)
     "claude-haiku-4-5-20251001": (0.80, 4.00),
-    "claude-sonnet-4-5-20250514": (3.00, 15.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
     "claude-opus-4-6": (15.00, 75.00),
 }
 
