@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from tentacle.llm.client import LLMClient
 from tentacle.llm.prompts import FILTER_BATCH_SYSTEM, FILTER_BATCH_USER, FILTER_SYSTEM, FILTER_USER
 from tentacle.models import Article
 
 logger = logging.getLogger(__name__)
+
+_CODE_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)```", re.DOTALL)
+
+
+def _strip_code_fence(text: str) -> str:
+    """Strip markdown code fences if present, returning the inner content."""
+    m = _CODE_FENCE_RE.search(text)
+    return m.group(1).strip() if m else text.strip()
 
 
 def filter_article(
@@ -35,7 +44,7 @@ def filter_article(
     )
 
     try:
-        data = json.loads(response)
+        data = json.loads(_strip_code_fence(response))
         relevance = float(data["relevance"])
         reasoning = str(data.get("reasoning", ""))
     except (json.JSONDecodeError, KeyError, ValueError):
@@ -95,7 +104,7 @@ def filter_batch(
         parse_failed = False
 
         try:
-            data = json.loads(response)
+            data = json.loads(_strip_code_fence(response))
             if not isinstance(data, list):
                 raise ValueError("expected JSON array")
             for entry in data:
