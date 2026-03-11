@@ -1,5 +1,5 @@
 [Unit]
-Description=Tentacle research scout for OctopusGarden
+Description=Tentacle backlog review for OctopusGarden
 After=network-online.target
 Wants=network-online.target
 
@@ -8,12 +8,12 @@ Type=oneshot
 User=ryan
 # Edit WorkingDirectory to match your clone path; %h expands to the user's home directory
 EnvironmentFile=-%h/.config/tentacle/env
-ExecStart=/usr/bin/python3 -m tentacle run
+ExecStart=/usr/bin/python3 -m tentacle review-backlog
 WorkingDirectory=%h/src/foundatron/tentacle
 TimeoutStartSec=600
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=tentacle
+SyslogIdentifier=tentacle-backlog
 
 [Install]
 WantedBy=multi-user.target

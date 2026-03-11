@@ -5,6 +5,7 @@ Description=Run tentacle research scout daily
 OnCalendar=daily
 RandomizedDelaySec=3600
 Persistent=true
+Unit=tentacle.service
 
 [Install]
 WantedBy=timers.target

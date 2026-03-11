@@ -1,0 +1,11 @@
+[Unit]
+Description=Run tentacle backlog review weekly
+
+[Timer]
+OnCalendar=weekly
+RandomizedDelaySec=3600
+Persistent=true
+Unit=tentacle-backlog.service
+
+[Install]
+WantedBy=timers.target

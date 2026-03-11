@@ -6,6 +6,7 @@ import argparse
 import logging
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -13,7 +14,13 @@ import types
 from datetime import UTC, datetime
 from pathlib import Path
 
-from tentacle.config import DEFAULT_CONFIG_PATH, DEFAULT_CONFIG_TEMPLATE, Config, load_config
+from tentacle.config import (
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_CONFIG_TEMPLATE,
+    Config,
+    ConfigError,
+    load_config,
+)
 from tentacle.context import fetch_context
 from tentacle.db import Store
 from tentacle.decay import apply_decay
@@ -393,6 +400,68 @@ def cmd_daemon(args: argparse.Namespace, config: Config) -> None:
     logger.info("Daemon stopped gracefully")
 
 
+def cmd_health(args: argparse.Namespace, config: Config) -> None:
+    """Check infrastructure readiness: API key, DB, gh auth, last scan status."""
+    all_ok = True
+
+    # 1. API key
+    if config.anthropic_api_key:
+        print("api_key: ok")
+    else:
+        print("api_key: FAIL (anthropic_api_key is not set)")
+        all_ok = False
+
+    # 2. DB writable — open once and reuse for step 4
+    store: Store | None = None
+    try:
+        store = _get_store(config)
+        print("db: ok")
+    except Exception as exc:
+        print(f"db: FAIL ({exc})")
+        all_ok = False
+
+    # 3. gh auth
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "status"],
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            print("gh_auth: ok")
+        else:
+            print("gh_auth: FAIL (gh auth status returned non-zero)")
+            all_ok = False
+    except FileNotFoundError:
+        print("gh_auth: FAIL (gh not found)")
+        all_ok = False
+    except subprocess.TimeoutExpired:
+        print("gh_auth: FAIL (gh auth status timed out)")
+        all_ok = False
+
+    # 4. Last scan status (informational only)
+    if store is not None:
+        try:
+            runs = store.get_recent_scan_runs(1)
+            if runs:
+                run = runs[0]
+                if run.status == "error":
+                    print(f"last_scan: warning (last run for '{run.source}' had status=error)")
+                else:
+                    print(f"last_scan: {run.status} (source={run.source})")
+            else:
+                print("last_scan: no scans yet")
+        except Exception as exc:
+            logger.warning("Could not retrieve last scan status: %s", exc)
+            print(f"last_scan: could not retrieve ({exc})")
+        finally:
+            store.close()
+    else:
+        print("last_scan: skipped (db unavailable)")
+
+    sys.exit(0 if all_ok else 1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="tentacle",
@@ -419,6 +488,9 @@ def main() -> None:
     # status
     subparsers.add_parser("status", help="Show current status")
 
+    # health
+    subparsers.add_parser("health", help="Check infrastructure readiness")
+
     # daemon
     daemon_parser = subparsers.add_parser(
         "daemon", help="Run scan pipeline on a recurring schedule"
@@ -442,11 +514,25 @@ def main() -> None:
     if args.command == "init":
         cmd_init(args)
     else:
-        config = load_config(args.config)
+        if args.command == "health":
+            try:
+                config = load_config(args.config)
+            except ConfigError as e:
+                logger.warning(
+                    "Config file not found or invalid (%s); using defaults — "
+                    "DB path may not match your actual setup",
+                    e,
+                )
+                config = Config()
+                if api_key := os.environ.get("ANTHROPIC_API_KEY"):
+                    config.anthropic_api_key = api_key
+        else:
+            config = load_config(args.config)
         commands = {
             "run": cmd_run,
             "review-backlog": cmd_review_backlog,
             "status": cmd_status,
             "daemon": cmd_daemon,
+            "health": cmd_health,
         }
         commands[args.command](args, config)

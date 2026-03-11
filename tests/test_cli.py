@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import io
+import os
 import signal as sig_module
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -15,10 +17,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tentacle.cli import cmd_daemon, cmd_init, cmd_run, cmd_status, main
-from tentacle.config import Config
+from tentacle.cli import cmd_daemon, cmd_health, cmd_init, cmd_run, cmd_status, main
+from tentacle.config import Config, ConfigError
 from tentacle.llm.client import BudgetExceededError, CostTracker, UsageRecord
-from tentacle.models import Article
+from tentacle.models import Article, ScanRun
 
 
 def _make_article(article_id: str = "abc123") -> Article:
@@ -504,6 +506,255 @@ class TestCmdRun(unittest.TestCase):
 
         assert first_cost == pytest.approx(0.50)
         assert second_cost == pytest.approx(0.30)
+
+
+class TestCmdHealth(unittest.TestCase):
+    def _make_scan_run(self, status: str = "ok", source: str = "arxiv") -> ScanRun:
+        return ScanRun(
+            started_at=datetime(2025, 1, 1, tzinfo=UTC),
+            source=source,
+            status=status,
+        )
+
+    @patch("tentacle.cli._get_store")
+    @patch("tentacle.cli.subprocess.run")
+    def test_health_all_ok(self, mock_subproc: MagicMock, mock_get_store: MagicMock) -> None:
+        mock_store = MagicMock()
+        mock_get_store.return_value = mock_store
+        mock_store.get_recent_scan_runs.return_value = [self._make_scan_run("ok")]
+        mock_subproc.return_value = MagicMock(returncode=0)
+
+        config = Config()
+        config.anthropic_api_key = "sk-ant-test"
+        args = Namespace()
+
+        with (
+            patch("sys.stdout", new_callable=io.StringIO) as mock_out,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            cmd_health(args, config)
+
+        assert ctx.exception.code == 0
+        output = mock_out.getvalue()
+        assert "api_key: ok" in output
+        assert "db: ok" in output
+        assert "gh_auth: ok" in output
+
+    @patch("tentacle.cli._get_store")
+    @patch("tentacle.cli.subprocess.run")
+    def test_health_missing_api_key(
+        self, mock_subproc: MagicMock, mock_get_store: MagicMock
+    ) -> None:
+        mock_store = MagicMock()
+        mock_get_store.return_value = mock_store
+        mock_store.get_recent_scan_runs.return_value = []
+        mock_subproc.return_value = MagicMock(returncode=0)
+
+        config = Config()
+        config.anthropic_api_key = ""
+        args = Namespace()
+
+        with (
+            patch("sys.stdout", new_callable=io.StringIO) as mock_out,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            cmd_health(args, config)
+
+        assert ctx.exception.code == 1
+        assert "api_key: FAIL" in mock_out.getvalue()
+
+    @patch("tentacle.cli._get_store")
+    @patch("tentacle.cli.subprocess.run")
+    def test_health_db_inaccessible(
+        self, mock_subproc: MagicMock, mock_get_store: MagicMock
+    ) -> None:
+        mock_get_store.side_effect = OSError("permission denied")
+        mock_subproc.return_value = MagicMock(returncode=0)
+
+        config = Config()
+        config.anthropic_api_key = "sk-ant-test"
+        args = Namespace()
+
+        with (
+            patch("sys.stdout", new_callable=io.StringIO) as mock_out,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            cmd_health(args, config)
+
+        assert ctx.exception.code == 1
+        assert "db: FAIL" in mock_out.getvalue()
+
+    @patch("tentacle.cli._get_store")
+    @patch("tentacle.cli.subprocess.run")
+    def test_health_gh_not_authenticated(
+        self, mock_subproc: MagicMock, mock_get_store: MagicMock
+    ) -> None:
+        mock_store = MagicMock()
+        mock_get_store.return_value = mock_store
+        mock_store.get_recent_scan_runs.return_value = []
+        mock_subproc.return_value = MagicMock(returncode=1)
+
+        config = Config()
+        config.anthropic_api_key = "sk-ant-test"
+        args = Namespace()
+
+        with (
+            patch("sys.stdout", new_callable=io.StringIO) as mock_out,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            cmd_health(args, config)
+
+        assert ctx.exception.code == 1
+        assert "gh_auth: FAIL" in mock_out.getvalue()
+
+    @patch("tentacle.cli._get_store")
+    @patch("tentacle.cli.subprocess.run")
+    def test_health_gh_not_installed(
+        self, mock_subproc: MagicMock, mock_get_store: MagicMock
+    ) -> None:
+        mock_store = MagicMock()
+        mock_get_store.return_value = mock_store
+        mock_store.get_recent_scan_runs.return_value = []
+        mock_subproc.side_effect = FileNotFoundError("gh not found")
+
+        config = Config()
+        config.anthropic_api_key = "sk-ant-test"
+        args = Namespace()
+
+        with (
+            patch("sys.stdout", new_callable=io.StringIO) as mock_out,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            cmd_health(args, config)
+
+        assert ctx.exception.code == 1
+        assert "gh_auth: FAIL" in mock_out.getvalue()
+
+    @patch("tentacle.cli._get_store")
+    @patch("tentacle.cli.subprocess.run")
+    def test_health_last_scan_error(
+        self, mock_subproc: MagicMock, mock_get_store: MagicMock
+    ) -> None:
+        mock_store = MagicMock()
+        mock_get_store.return_value = mock_store
+        mock_store.get_recent_scan_runs.return_value = [self._make_scan_run("error")]
+        mock_subproc.return_value = MagicMock(returncode=0)
+
+        config = Config()
+        config.anthropic_api_key = "sk-ant-test"
+        args = Namespace()
+
+        with (
+            patch("sys.stdout", new_callable=io.StringIO) as mock_out,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            cmd_health(args, config)
+
+        assert ctx.exception.code == 0
+        assert "warning" in mock_out.getvalue()
+
+    @patch("tentacle.cli._get_store")
+    @patch("tentacle.cli.subprocess.run")
+    def test_health_no_previous_scans(
+        self, mock_subproc: MagicMock, mock_get_store: MagicMock
+    ) -> None:
+        mock_store = MagicMock()
+        mock_get_store.return_value = mock_store
+        mock_store.get_recent_scan_runs.return_value = []
+        mock_subproc.return_value = MagicMock(returncode=0)
+
+        config = Config()
+        config.anthropic_api_key = "sk-ant-test"
+        args = Namespace()
+
+        with (
+            patch("sys.stdout", new_callable=io.StringIO) as mock_out,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            cmd_health(args, config)
+
+        assert ctx.exception.code == 0
+        assert "no scans yet" in mock_out.getvalue()
+
+    @patch("tentacle.cli._get_store")
+    @patch("tentacle.cli.subprocess.run")
+    def test_health_gh_timeout(self, mock_subproc: MagicMock, mock_get_store: MagicMock) -> None:
+        mock_store = MagicMock()
+        mock_get_store.return_value = mock_store
+        mock_store.get_recent_scan_runs.return_value = []
+        mock_subproc.side_effect = subprocess.TimeoutExpired(
+            cmd=["gh", "auth", "status"], timeout=10
+        )
+
+        config = Config()
+        config.anthropic_api_key = "sk-ant-test"
+        args = Namespace()
+
+        with (
+            patch("sys.stdout", new_callable=io.StringIO) as mock_out,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            cmd_health(args, config)
+
+        assert ctx.exception.code == 1
+        output = mock_out.getvalue()
+        assert "gh_auth: FAIL" in output
+        assert "timed out" in output
+
+    @patch("tentacle.cli._get_store")
+    @patch("tentacle.cli.subprocess.run")
+    def test_health_db_fail_skips_last_scan(
+        self, mock_subproc: MagicMock, mock_get_store: MagicMock
+    ) -> None:
+        """When DB open fails, last_scan check is skipped rather than retrying the store."""
+        mock_get_store.side_effect = OSError("permission denied")
+        mock_subproc.return_value = MagicMock(returncode=0)
+
+        config = Config()
+        config.anthropic_api_key = "sk-ant-test"
+        args = Namespace()
+
+        with (
+            patch("sys.stdout", new_callable=io.StringIO) as mock_out,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            cmd_health(args, config)
+
+        assert ctx.exception.code == 1
+        output = mock_out.getvalue()
+        assert "db: FAIL" in output
+        # Store was opened exactly once (not twice)
+        mock_get_store.assert_called_once()
+        assert "last_scan: skipped" in output
+
+
+class TestMainHealthConfigFallback(unittest.TestCase):
+    def test_config_error_fallback_uses_env_api_key(self) -> None:
+        """ConfigError in main() health path falls back to Config() and warns."""
+        with (
+            patch("sys.argv", ["tentacle", "health"]),
+            patch("tentacle.cli.load_config", side_effect=ConfigError("no config")),
+            patch("tentacle.cli.cmd_health") as mock_health,
+            patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-from-env"}),
+        ):
+            main()
+
+        called_config = mock_health.call_args[0][1]
+        assert called_config.anthropic_api_key == "sk-ant-from-env"
+
+    def test_config_error_fallback_no_env_key(self) -> None:
+        """ConfigError fallback with no env var leaves api key empty."""
+        env_without_key = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        with (
+            patch("sys.argv", ["tentacle", "health"]),
+            patch("tentacle.cli.load_config", side_effect=ConfigError("no config")),
+            patch("tentacle.cli.cmd_health") as mock_health,
+            patch.dict(os.environ, env_without_key, clear=True),
+        ):
+            main()
+
+        called_config = mock_health.call_args[0][1]
+        assert called_config.anthropic_api_key == ""
 
 
 class TestCmdInit(unittest.TestCase):
