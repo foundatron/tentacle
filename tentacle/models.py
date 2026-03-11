@@ -42,6 +42,7 @@ class Analysis:
     suggested_title: str | None = None
     suggested_body: str | None = None
     maturity_reasoning: str | None = None
+    confidence_score: float | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
     cost_usd: float | None = None
