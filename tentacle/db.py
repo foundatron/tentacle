@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS articles (
     discovered_at   TEXT NOT NULL,
     tags            TEXT,
     full_text       TEXT,
-    access_status   TEXT NOT NULL DEFAULT 'unknown'
+    access_status   TEXT NOT NULL DEFAULT 'unknown',
+    metadata        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS analyses (
@@ -139,6 +140,14 @@ class Store:
             if "duplicate column" not in str(exc).lower():
                 raise
 
+        # Migration: add metadata column for existing DBs (safe to ignore if exists).
+        try:
+            self._conn.execute("ALTER TABLE articles ADD COLUMN metadata TEXT")
+            self._conn.commit()
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc).lower():
+                raise
+
     def close(self) -> None:
         self._conn.close()
 
@@ -148,8 +157,8 @@ class Store:
         self._conn.execute(
             """INSERT OR IGNORE INTO articles
             (id, source, source_id, title, authors, abstract, url, pdf_url,
-             published_at, discovered_at, tags, full_text, access_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             published_at, discovered_at, tags, full_text, access_status, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 article.id,
                 article.source,
@@ -164,6 +173,7 @@ class Store:
                 json.dumps(article.tags) if article.tags is not None else None,
                 article.full_text,
                 article.access_status,
+                json.dumps(article.metadata) if article.metadata is not None else None,
             ),
         )
         self._conn.commit()
@@ -426,6 +436,10 @@ class Store:
 
 
 def _row_to_article(row: sqlite3.Row) -> Article:
+    raw_metadata = row["metadata"]
+    metadata: dict[str, str | int | float | bool | None] | None = (
+        json.loads(raw_metadata) if raw_metadata else None
+    )
     return Article(
         id=row["id"],
         source=row["source"],
@@ -440,6 +454,7 @@ def _row_to_article(row: sqlite3.Row) -> Article:
         tags=json.loads(row["tags"]) if row["tags"] else None,
         full_text=row["full_text"],
         access_status=row["access_status"],
+        metadata=metadata,
     )
 
 

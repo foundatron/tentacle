@@ -7,6 +7,7 @@ import os
 import tomllib
 import warnings
 from pathlib import Path
+from typing import Literal
 
 DEFAULT_CONFIG_PATH = Path("~/.config/tentacle/config.toml").expanduser()
 
@@ -79,6 +80,9 @@ queries = [
     "AI software engineering",
 ]
 max_results = 30
+# min_points = 10
+# days_back = 30
+# story_type = "story"  # "story", "show_hn", or "ask_hn"
 
 [sources.rss]
 enabled = false
@@ -118,6 +122,15 @@ class SemanticScholarSourceConfig(SourceConfig):
 
 
 @dataclasses.dataclass
+class HackerNewsSourceConfig(SourceConfig):
+    """Hacker News-specific source configuration."""
+
+    min_points: int = 10
+    days_back: int | None = None
+    story_type: Literal["story", "show_hn", "ask_hn"] = "story"
+
+
+@dataclasses.dataclass
 class Config:
     """Application configuration."""
 
@@ -150,7 +163,7 @@ class Config:
     semantic_scholar: SemanticScholarSourceConfig = dataclasses.field(
         default_factory=SemanticScholarSourceConfig
     )
-    hackernews: SourceConfig = dataclasses.field(default_factory=SourceConfig)
+    hackernews: HackerNewsSourceConfig = dataclasses.field(default_factory=HackerNewsSourceConfig)
     rss: SourceConfig = dataclasses.field(default_factory=SourceConfig)
 
     # Decay
@@ -230,6 +243,20 @@ def validate(config: Config) -> None:
         raise ConfigError(
             f"sources.semantic_scholar.days_back must be >= 1, "
             f"got {config.semantic_scholar.days_back}"
+        )
+
+    if config.hackernews.min_points < 0:
+        raise ConfigError(
+            f"sources.hackernews.min_points must be >= 0, got {config.hackernews.min_points}"
+        )
+    if config.hackernews.days_back is not None and config.hackernews.days_back < 1:
+        raise ConfigError(
+            f"sources.hackernews.days_back must be >= 1, got {config.hackernews.days_back}"
+        )
+    if config.hackernews.story_type not in {"story", "show_hn", "ask_hn"}:
+        raise ConfigError(
+            f"sources.hackernews.story_type must be 'story', 'show_hn', or 'ask_hn', "
+            f"got {config.hackernews.story_type!r}"
         )
 
 
