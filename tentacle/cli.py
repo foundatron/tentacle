@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from tentacle.config import Config, load_config
+from tentacle.config import DEFAULT_CONFIG_PATH, DEFAULT_CONFIG_TEMPLATE, Config, load_config
 from tentacle.context import fetch_context
 from tentacle.db import Store
 from tentacle.decay import apply_decay
@@ -66,6 +67,22 @@ def _get_sources(config: Config) -> list[tuple[str, list[str], int, SourceAdapte
     if config.rss.enabled and config.rss.queries:
         sources.append(("rss", config.rss.queries, config.rss.max_results, RSSAdapter()))
     return sources
+
+
+def cmd_init(args: argparse.Namespace, config_path: Path | None = None) -> None:
+    """Write a default config file to ~/.config/tentacle/config.toml."""
+    resolved_path = config_path if config_path is not None else DEFAULT_CONFIG_PATH
+
+    if resolved_path.exists():
+        print(f"Config already exists at {resolved_path}. Aborting.")
+        return
+
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_path.write_text(DEFAULT_CONFIG_TEMPLATE)
+    print(f"Config written to {resolved_path}")
+
+    if "ANTHROPIC_API_KEY" not in os.environ:
+        print("Reminder: set ANTHROPIC_API_KEY in your environment or add it to the config file.")
 
 
 def cmd_run(args: argparse.Namespace, config: Config) -> None:
@@ -268,6 +285,9 @@ def main() -> None:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # init
+    subparsers.add_parser("init", help="Write a default config file")
+
     # run
     run_parser = subparsers.add_parser("run", help="Run the full scan pipeline")
     run_parser.add_argument("--dry-run", action="store_true", help="Don't create GitHub issues")
@@ -281,11 +301,14 @@ def main() -> None:
     args = parser.parse_args()
 
     _setup_logging(args.verbose)
-    config = load_config(args.config)
 
-    commands = {
-        "run": cmd_run,
-        "review-backlog": cmd_review_backlog,
-        "status": cmd_status,
-    }
-    commands[args.command](args, config)
+    if args.command == "init":
+        cmd_init(args)
+    else:
+        config = load_config(args.config)
+        commands = {
+            "run": cmd_run,
+            "review-backlog": cmd_review_backlog,
+            "status": cmd_status,
+        }
+        commands[args.command](args, config)

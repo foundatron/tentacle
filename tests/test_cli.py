@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import unittest
 from argparse import Namespace
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tentacle.cli import cmd_run, cmd_status
+from tentacle.cli import cmd_init, cmd_run, cmd_status
 from tentacle.config import Config
 from tentacle.llm.client import BudgetExceededError, CostTracker, UsageRecord
 from tentacle.models import Article
@@ -215,6 +217,32 @@ class TestCmdRun(unittest.TestCase):
 
         assert first_cost == pytest.approx(0.50)
         assert second_cost == pytest.approx(0.30)
+
+
+class TestCmdInit(unittest.TestCase):
+    def test_cmd_init_creates_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / ".config" / "tentacle" / "config.toml"
+            args = Namespace()
+            cmd_init(args, config_path=config_path)
+            self.assertTrue(config_path.exists())
+            content = config_path.read_text()
+            self.assertIn("target_repo", content)
+
+    def test_cmd_init_refuses_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / ".config" / "tentacle" / "config.toml"
+            config_path.parent.mkdir(parents=True)
+            original_content = "original = true\n"
+            config_path.write_text(original_content)
+
+            args = Namespace()
+            with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                cmd_init(args, config_path=config_path)
+                output = mock_out.getvalue()
+
+            self.assertEqual(config_path.read_text(), original_content)
+            self.assertIn("already exists", output)
 
 
 if __name__ == "__main__":
