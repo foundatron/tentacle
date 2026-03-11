@@ -86,6 +86,30 @@ class TestValidate(unittest.TestCase):
                 with self.assertRaises(ConfigError):
                     validate(config)
 
+    def test_validate_days_back(self) -> None:
+        config = self._valid()
+        config.arxiv.days_back = 0
+        with self.assertRaises(ConfigError):
+            validate(config)
+
+        config.arxiv.days_back = 1
+        validate(config)  # should not raise
+
+        config.arxiv.days_back = None
+        validate(config)  # should not raise
+
+    def test_validate_sort_order(self) -> None:
+        config = self._valid()
+        config.arxiv.sort_order = "random"
+        with self.assertRaises(ConfigError):
+            validate(config)
+
+        config.arxiv.sort_order = "ascending"
+        validate(config)  # should not raise
+
+        config.arxiv.sort_order = "descending"
+        validate(config)  # should not raise
+
 
 class TestLoadFromToml(unittest.TestCase):
     def test_load_from_toml(self) -> None:

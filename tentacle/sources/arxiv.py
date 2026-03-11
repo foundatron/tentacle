@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from tentacle.dedup import fingerprint
 from tentacle.models import Article
@@ -16,10 +18,19 @@ logger = logging.getLogger(__name__)
 
 _ARXIV_API = "http://export.arxiv.org/api/query"
 _ATOM_NS = "{http://www.w3.org/2005/Atom}"
+_PAGE_SIZE = 100
 
 
 class ArxivAdapter(SourceAdapter):
     """Fetch papers from the arXiv Atom API."""
+
+    def __init__(
+        self,
+        days_back: int | None = None,
+        sort_order: str = "descending",
+    ) -> None:
+        self._days_back = days_back
+        self._sort_order = sort_order
 
     @property
     def name(self) -> str:
@@ -38,28 +49,71 @@ class ArxivAdapter(SourceAdapter):
 
         return articles[:max_results]
 
+    def _fetch_url(self, url: str) -> bytes:
+        """Fetch URL with retry on 503 errors (exponential backoff: 1s, 2s, 4s)."""
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                with urllib.request.urlopen(url, timeout=30) as resp:
+                    return bytes(resp.read())
+            except urllib.error.HTTPError as e:
+                if e.code == 503 and attempt < max_retries:
+                    delay = 2**attempt
+                    logger.warning(
+                        "arXiv returned 503, retrying in %ds (attempt %d/%d)",
+                        delay,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    time.sleep(delay)
+                else:
+                    raise
+        raise RuntimeError("Unreachable")  # pragma: no cover
+
     def _search(self, query: str, max_results: int) -> list[Article]:
-        params = urllib.parse.urlencode(
-            {
-                "search_query": f"all:{query}",
-                "start": 0,
-                "max_results": max_results,
-                "sortBy": "submittedDate",
-                "sortOrder": "descending",
-            }
-        )
-        url = f"{_ARXIV_API}?{params}"
+        search_query = f"all:{query}"
+        if self._days_back is not None:
+            now = datetime.now(UTC)
+            start_date = now - timedelta(days=self._days_back)
+            start_str = start_date.strftime("%Y%m%d") + "0000"
+            end_str = now.strftime("%Y%m%d") + "2359"
+            search_query += f" AND submittedDate:[{start_str} TO {end_str}]"
 
-        with urllib.request.urlopen(url, timeout=30) as resp:
-            data = resp.read()
-
-        root = ET.fromstring(data)  # noqa: S314
         articles: list[Article] = []
+        start = 0
 
-        for entry in root.findall(f"{_ATOM_NS}entry"):
-            article = self._parse_entry(entry)
-            if article:
-                articles.append(article)
+        while len(articles) < max_results:
+            page_size = min(_PAGE_SIZE, max_results - len(articles))
+            params = urllib.parse.urlencode(
+                {
+                    "search_query": search_query,
+                    "start": start,
+                    "max_results": page_size,
+                    "sortBy": "submittedDate",
+                    "sortOrder": self._sort_order,
+                }
+            )
+            url = f"{_ARXIV_API}?{params}"
+
+            if start > 0:
+                time.sleep(1)
+
+            data = self._fetch_url(url)
+            root = ET.fromstring(data)  # noqa: S314
+            entries = root.findall(f"{_ATOM_NS}entry")
+
+            for entry in entries:
+                try:
+                    article = self._parse_entry(entry)
+                    if article:
+                        articles.append(article)
+                except Exception:
+                    logger.warning("arXiv: skipping malformed entry")
+
+            start += page_size
+
+            if len(entries) < page_size:
+                break
 
         logger.info("arXiv: %d results for '%s'", len(articles), query)
         return articles
