@@ -16,6 +16,17 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_INITIAL_DELAY = 2.0
 
+
+class RetriesExhaustedError(Exception):
+    """Raised when fetch_with_backoff exhausts all retries."""
+
+    def __init__(self, source_name: str, status_code: int, cause: Exception) -> None:
+        self.source_name = source_name
+        self.status_code = status_code
+        super().__init__(f"{source_name}: HTTP {status_code}, max retries exhausted")
+        self.__cause__ = cause
+
+
 # HTTP status codes worth retrying.
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
@@ -47,7 +58,7 @@ def fetch_with_backoff(
                 raise
             if attempt == max_retries:
                 logger.error("%s: HTTP %d, max retries exhausted", label, exc.code)
-                raise
+                raise RetriesExhaustedError(label, exc.code, exc) from exc
             delay = initial_delay * (2**attempt)
             # Respect Retry-After header as a floor.
             raw_retry = exc.headers.get("Retry-After") if exc.headers else None

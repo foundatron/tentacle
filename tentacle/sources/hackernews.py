@@ -11,7 +11,7 @@ from typing import Literal
 
 from tentacle.dedup import fingerprint
 from tentacle.models import Article
-from tentacle.sources.base import SourceAdapter, fetch_with_backoff
+from tentacle.sources.base import RetriesExhaustedError, SourceAdapter, fetch_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,9 @@ class HackerNewsAdapter(SourceAdapter):
             try:
                 results = self._search(query, per_query)
                 articles.extend(results)
+            except RetriesExhaustedError:
+                logger.warning("HN: rate-limited, skipping remaining queries")
+                break
             except Exception:
                 logger.exception("HN query failed: %s", query)
 

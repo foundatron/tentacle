@@ -245,11 +245,11 @@ class TestArxivAdapter(unittest.TestCase):
         mock_urlopen_fn.side_effect = _make_http_error(503)
 
         adapter = ArxivAdapter()
-        with self.assertLogs("tentacle.sources.arxiv", level="ERROR") as log:
+        with self.assertLogs("tentacle.sources.arxiv", level="WARNING") as log:
             articles = adapter.fetch(["query"], max_results=10)
 
         assert articles == []
-        assert any("arXiv query failed" in m for m in log.output)
+        assert any("skipping remaining queries" in m for m in log.output)
 
     @patch("tentacle.sources.arxiv.datetime")
     @patch("tentacle.sources.base.urllib.request.urlopen")
@@ -528,11 +528,12 @@ class TestSemanticScholarAdapter(unittest.TestCase):
     def test_retry_429_exhausted(self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock) -> None:
         mock_urlopen_fn.side_effect = _make_429_error("1")
         adapter = SemanticScholarAdapter()
-        with self.assertLogs("tentacle.sources.semantic_scholar", level="ERROR"):
+        with self.assertLogs("tentacle.sources.semantic_scholar", level="WARNING") as log:
             articles = adapter.fetch(["query"], max_results=10)
 
         assert articles == []
         assert mock_sleep.call_count == 5  # 5 retries before exhaustion
+        assert any("skipping remaining queries" in m for m in log.output)
 
     @patch("tentacle.sources.semantic_scholar.datetime")
     @patch("tentacle.sources.base.urllib.request.urlopen")

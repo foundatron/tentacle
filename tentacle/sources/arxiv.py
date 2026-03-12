@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 from tentacle.dedup import fingerprint
 from tentacle.models import Article
-from tentacle.sources.base import SourceAdapter, fetch_with_backoff
+from tentacle.sources.base import RetriesExhaustedError, SourceAdapter, fetch_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,9 @@ class ArxivAdapter(SourceAdapter):
             try:
                 results = self._search(query, per_query)
                 articles.extend(results)
+            except RetriesExhaustedError:
+                logger.warning("arXiv: rate-limited, skipping remaining queries")
+                break
             except Exception:
                 logger.exception("arXiv query failed: %s", query)
 
