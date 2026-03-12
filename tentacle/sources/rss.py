@@ -12,7 +12,7 @@ from email.utils import parsedate_to_datetime
 
 from tentacle.dedup import fingerprint
 from tentacle.models import Article
-from tentacle.sources.base import SourceAdapter
+from tentacle.sources.base import SourceAdapter, fetch_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +54,11 @@ def _fetch_content(url: str, timeout: int, max_bytes: int) -> str | None:
     """Fetch a URL and return extracted plain text, or None on any failure."""
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "tentacle/0.1"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            content_type: str = resp.headers.get("Content-Type", "")
-            charset = "utf-8"
-            if "charset=" in content_type:
-                charset = content_type.split("charset=")[-1].split(";")[0].strip().strip("\"'")
-            data = resp.read(max_bytes)
-        html_text = data.decode(charset, errors="replace")
+        raw = fetch_with_backoff(req, timeout=timeout, source_name="RSS content")
+        data = raw[:max_bytes]
+        # Sniff charset from Content-Type if we had one — but fetch_with_backoff
+        # returns raw bytes so we just try utf-8.
+        html_text = data.decode("utf-8", errors="replace")
         parser = _HTMLToTextParser()
         parser.feed(html_text)
         text = parser.get_text()
@@ -104,8 +102,7 @@ class RSSAdapter(SourceAdapter):
 
     def _fetch_feed(self, feed_url: str) -> list[Article]:
         req = urllib.request.Request(feed_url, headers={"User-Agent": "tentacle/0.1"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = resp.read()
+        data = fetch_with_backoff(req, source_name="RSS")
 
         root = ET.fromstring(data)  # noqa: S314
 

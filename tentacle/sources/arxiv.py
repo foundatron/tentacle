@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import logging
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime, timedelta
 
 from tentacle.dedup import fingerprint
 from tentacle.models import Article
-from tentacle.sources.base import SourceAdapter
+from tentacle.sources.base import SourceAdapter, fetch_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -49,28 +47,10 @@ class ArxivAdapter(SourceAdapter):
 
         return articles[:max_results]
 
-    def _fetch_url(self, url: str) -> bytes:
-        """Fetch URL with retry on 503 errors (exponential backoff: 1s, 2s, 4s)."""
-        max_retries = 3
-        last_exc: urllib.error.HTTPError | None = None
-        for attempt in range(max_retries + 1):
-            try:
-                with urllib.request.urlopen(url, timeout=30) as resp:
-                    return resp.read()  # type: ignore[no-any-return]
-            except urllib.error.HTTPError as e:
-                if e.code != 503:
-                    raise
-                last_exc = e
-                if attempt < max_retries:
-                    delay = 2**attempt
-                    logger.warning(
-                        "arXiv returned 503, retrying in %ds (attempt %d/%d)",
-                        delay,
-                        attempt + 1,
-                        max_retries,
-                    )
-                    time.sleep(delay)
-        raise last_exc  # type: ignore[misc]  # always set when 503 retries exhausted
+    @staticmethod
+    def _fetch_url(url: str) -> bytes:
+        """Fetch URL with exponential backoff on retryable errors."""
+        return fetch_with_backoff(url, source_name="arXiv")
 
     def _search(self, query: str, max_results: int) -> list[Article]:
         search_query = f"all:{query}"

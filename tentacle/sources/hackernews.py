@@ -11,7 +11,7 @@ from typing import Literal
 
 from tentacle.dedup import fingerprint
 from tentacle.models import Article
-from tentacle.sources.base import SourceAdapter
+from tentacle.sources.base import SourceAdapter, fetch_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +71,7 @@ class HackerNewsAdapter(SourceAdapter):
         url = f"{_HN_SEARCH_API}?{params}"
 
         req = urllib.request.Request(url, headers={"User-Agent": "tentacle/0.1"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
+        data = json.loads(fetch_with_backoff(req, source_name="HN"))
 
         articles: list[Article] = []
         for hit in data.get("hits", []):

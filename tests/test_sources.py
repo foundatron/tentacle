@@ -148,7 +148,7 @@ def _make_http_error(code: int) -> urllib.error.HTTPError:
 
 
 class TestArxivAdapter(unittest.TestCase):
-    @patch("tentacle.sources.arxiv.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_fetch_parses_atom(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(ARXIV_RESPONSE)
         adapter = ArxivAdapter()
@@ -163,7 +163,7 @@ class TestArxivAdapter(unittest.TestCase):
         assert a.tags == ["cs.SE", "cs.AI"]
 
     @patch("tentacle.sources.arxiv.time.sleep")
-    @patch("tentacle.sources.arxiv.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_pagination_multiple_pages(
         self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock
     ) -> None:
@@ -191,14 +191,14 @@ class TestArxivAdapter(unittest.TestCase):
         # Sleep called once between pages
         mock_sleep.assert_called_once_with(1)
 
-    @patch("tentacle.sources.arxiv.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_empty_feed(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(_make_arxiv_feed(0))
         adapter = ArxivAdapter()
         articles = adapter.fetch(["query"], max_results=10)
         assert articles == []
 
-    @patch("tentacle.sources.arxiv.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_malformed_entry_skipped(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(_make_arxiv_feed(2))
         adapter = ArxivAdapter()
@@ -221,8 +221,8 @@ class TestArxivAdapter(unittest.TestCase):
         assert len(articles) == 1
         assert any("skipping malformed" in m for m in log.output)
 
-    @patch("tentacle.sources.arxiv.time.sleep")
-    @patch("tentacle.sources.arxiv.urllib.request.urlopen")
+    @patch("tentacle.sources.base.time.sleep")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_retry_on_503(self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock) -> None:
         mock_urlopen_fn.side_effect = [
             _make_http_error(503),
@@ -235,10 +235,10 @@ class TestArxivAdapter(unittest.TestCase):
 
         assert len(articles) == 1
         assert mock_urlopen_fn.call_count == 3
-        assert mock_sleep.call_args_list == [call(1), call(2)]
+        assert mock_sleep.call_args_list == [call(2.0), call(4.0)]
 
-    @patch("tentacle.sources.arxiv.time.sleep")
-    @patch("tentacle.sources.arxiv.urllib.request.urlopen")
+    @patch("tentacle.sources.base.time.sleep")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_retry_exhausted_raises(
         self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock
     ) -> None:
@@ -252,7 +252,7 @@ class TestArxivAdapter(unittest.TestCase):
         assert any("arXiv query failed" in m for m in log.output)
 
     @patch("tentacle.sources.arxiv.datetime")
-    @patch("tentacle.sources.arxiv.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_date_range_query_param(
         self, mock_urlopen_fn: MagicMock, mock_datetime: MagicMock
     ) -> None:
@@ -277,7 +277,7 @@ class TestArxivAdapter(unittest.TestCase):
         assert expected_start in search_query
         assert expected_end in search_query
 
-    @patch("tentacle.sources.arxiv.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_sort_order_passed(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(_make_arxiv_feed(0))
         adapter = ArxivAdapter(sort_order="ascending")
@@ -288,7 +288,7 @@ class TestArxivAdapter(unittest.TestCase):
 
 
 class TestHackerNewsAdapter(unittest.TestCase):
-    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_fetch_parses_hits(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(HN_RESPONSE)
         adapter = HackerNewsAdapter()
@@ -305,7 +305,7 @@ class TestHackerNewsAdapter(unittest.TestCase):
         assert a.metadata["num_comments"] == 7
         assert a.metadata["discussion_url"] == "https://news.ycombinator.com/item?id=12345"
 
-    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_min_points_in_query_params(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(b'{"hits": []}')
         adapter = HackerNewsAdapter(min_points=25)
@@ -317,7 +317,7 @@ class TestHackerNewsAdapter(unittest.TestCase):
         assert "numericFilters" in params
         assert "points>=25" in params["numericFilters"][0]
 
-    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_days_back_in_query_params(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(b'{"hits": []}')
         fixed_now = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
@@ -333,7 +333,7 @@ class TestHackerNewsAdapter(unittest.TestCase):
         assert "numericFilters" in params
         assert f"created_at_i>{expected_ts}" in params["numericFilters"][0]
 
-    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_story_type_tag(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(b'{"hits": []}')
         adapter = HackerNewsAdapter(story_type="show_hn")
@@ -344,14 +344,14 @@ class TestHackerNewsAdapter(unittest.TestCase):
         params = urllib.parse.parse_qs(parsed.query)
         assert params["tags"] == ["show_hn"]
 
-    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_empty_results(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(b'{"hits": []}')
         adapter = HackerNewsAdapter()
         articles = adapter.fetch(["query"], max_results=10)
         assert articles == []
 
-    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_missing_points_defaults_to_zero(self, mock_urlopen_fn: MagicMock) -> None:
         response = b"""\
 {
@@ -373,7 +373,7 @@ class TestHackerNewsAdapter(unittest.TestCase):
         assert articles[0].metadata is not None
         assert articles[0].metadata["points"] == 0
 
-    @patch("tentacle.sources.hackernews.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_missing_url_falls_back_to_discussion(self, mock_urlopen_fn: MagicMock) -> None:
         response = b"""\
 {
@@ -413,7 +413,7 @@ def _make_429_error(retry_after: str | None = "1") -> urllib.error.HTTPError:
 
 
 class TestSemanticScholarAdapter(unittest.TestCase):
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_fetch_parses_papers(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(S2_RESPONSE)
         adapter = SemanticScholarAdapter()
@@ -427,7 +427,7 @@ class TestSemanticScholarAdapter(unittest.TestCase):
         assert a.pdf_url == "https://example.com/paper.pdf"
         assert a.access_status == "open"
 
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_api_key_header(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(S2_RESPONSE)
         adapter = SemanticScholarAdapter(api_key="test-key")
@@ -436,7 +436,7 @@ class TestSemanticScholarAdapter(unittest.TestCase):
         req = mock_urlopen_fn.call_args[0][0]
         assert req.get_header("X-api-key") == "test-key"
 
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_no_api_key_header(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(S2_RESPONSE)
         adapter = SemanticScholarAdapter()
@@ -445,7 +445,7 @@ class TestSemanticScholarAdapter(unittest.TestCase):
         req = mock_urlopen_fn.call_args[0][0]
         assert req.get_header("X-api-key") is None
 
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_min_citations_filter(self, mock_urlopen_fn: MagicMock) -> None:
         response = b"""\
 {
@@ -479,7 +479,7 @@ class TestSemanticScholarAdapter(unittest.TestCase):
         assert len(articles) == 1
         assert articles[0].title == "High Citations Paper"
 
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_min_citations_null_treated_as_zero(self, mock_urlopen_fn: MagicMock) -> None:
         response = b"""\
 {
@@ -502,29 +502,29 @@ class TestSemanticScholarAdapter(unittest.TestCase):
 
         assert articles == []
 
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_empty_results(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(b'{"data": []}')
         adapter = SemanticScholarAdapter()
         articles = adapter.fetch(["query"], max_results=10)
         assert articles == []
 
-    @patch("tentacle.sources.semantic_scholar.time.sleep")
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    @patch("tentacle.sources.base.time.sleep")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_retry_on_429(self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock) -> None:
         mock_urlopen_fn.side_effect = [
             _make_429_error("1"),
             _mock_urlopen(S2_RESPONSE),
         ]
         adapter = SemanticScholarAdapter()
-        with self.assertLogs("tentacle.sources.semantic_scholar", level="WARNING"):
+        with self.assertLogs("tentacle.sources.base", level="WARNING"):
             articles = adapter.fetch(["query"], max_results=10)
 
         assert len(articles) == 1
-        mock_sleep.assert_called_once_with(1)
+        mock_sleep.assert_called_once_with(2.0)  # max(2.0 * 2^0, 1.0) = 2.0
 
-    @patch("tentacle.sources.semantic_scholar.time.sleep")
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    @patch("tentacle.sources.base.time.sleep")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_retry_429_exhausted(self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock) -> None:
         mock_urlopen_fn.side_effect = _make_429_error("1")
         adapter = SemanticScholarAdapter()
@@ -532,10 +532,10 @@ class TestSemanticScholarAdapter(unittest.TestCase):
             articles = adapter.fetch(["query"], max_results=10)
 
         assert articles == []
-        assert mock_sleep.call_count == 3  # 3 retries before exhaustion
+        assert mock_sleep.call_count == 5  # 5 retries before exhaustion
 
     @patch("tentacle.sources.semantic_scholar.datetime")
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_date_range_filter(self, mock_urlopen_fn: MagicMock, mock_datetime: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(b'{"data": []}')
         fixed_now = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
@@ -553,42 +553,41 @@ class TestSemanticScholarAdapter(unittest.TestCase):
         expected = f"{start_date.strftime('%Y-%m-%d')}:{fixed_now.strftime('%Y-%m-%d')}"
         assert date_param == expected
 
-    @patch("tentacle.sources.semantic_scholar.time.sleep")
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
-    def test_retry_after_non_integer_falls_back_to_one_second(
+    @patch("tentacle.sources.base.time.sleep")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
+    def test_retry_after_non_integer_ignored(
         self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock
     ) -> None:
-        """Non-integer Retry-After header should fall back to 1s and log at DEBUG."""
+        """Non-integer Retry-After header is ignored; computed backoff is used."""
         mock_urlopen_fn.side_effect = [
             _make_429_error("Thu, 01 Dec 1994 16:00:00 GMT"),
             _mock_urlopen(S2_RESPONSE),
         ]
         adapter = SemanticScholarAdapter()
-        with self.assertLogs("tentacle.sources.semantic_scholar", level="DEBUG") as log:
+        with self.assertLogs("tentacle.sources.base", level="WARNING"):
             articles = adapter.fetch(["query"], max_results=10)
 
         assert len(articles) == 1
-        mock_sleep.assert_called_once_with(1)  # fell back to 1s
-        assert any("not an integer" in m for m in log.output)
+        mock_sleep.assert_called_once_with(2.0)  # 2.0 * 2^0 = 2.0
 
-    @patch("tentacle.sources.semantic_scholar.time.sleep")
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
-    def test_retry_after_absent_falls_back_to_one_second(
+    @patch("tentacle.sources.base.time.sleep")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
+    def test_retry_after_absent_uses_computed_backoff(
         self, mock_urlopen_fn: MagicMock, mock_sleep: MagicMock
     ) -> None:
-        """Absent Retry-After header should default to 1s sleep."""
+        """Absent Retry-After header falls back to computed backoff."""
         mock_urlopen_fn.side_effect = [
             _make_429_error(None),
             _mock_urlopen(S2_RESPONSE),
         ]
         adapter = SemanticScholarAdapter()
-        with self.assertLogs("tentacle.sources.semantic_scholar", level="WARNING"):
+        with self.assertLogs("tentacle.sources.base", level="WARNING"):
             articles = adapter.fetch(["query"], max_results=10)
 
         assert len(articles) == 1
-        mock_sleep.assert_called_once_with(1)
+        mock_sleep.assert_called_once_with(2.0)  # 2.0 * 2^0 = 2.0
 
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_url_error_returns_empty(self, mock_urlopen_fn: MagicMock) -> None:
         """URLError (e.g. DNS failure, timeout) should log and return no articles."""
         import urllib.error as _ue
@@ -601,10 +600,10 @@ class TestSemanticScholarAdapter(unittest.TestCase):
         assert articles == []
         assert any("network error" in m for m in log.output)
 
-    @patch("tentacle.sources.semantic_scholar.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_non_retryable_error_skips_query(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.side_effect = [
-            _make_http_error(500),
+            _make_http_error(403),
             _mock_urlopen(S2_RESPONSE),
         ]
         adapter = SemanticScholarAdapter()
@@ -616,7 +615,7 @@ class TestSemanticScholarAdapter(unittest.TestCase):
 
 
 class TestRSSAdapter(unittest.TestCase):
-    @patch("tentacle.sources.rss.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_fetch_parses_rss(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(RSS_RESPONSE)
         adapter = RSSAdapter()
@@ -628,7 +627,7 @@ class TestRSSAdapter(unittest.TestCase):
         assert a.title == "New Findings in Code Gen"
         assert a.url == "https://blog.example.com/codegen"
 
-    @patch("tentacle.sources.rss.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_fetch_parses_atom(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(ATOM_RESPONSE)
         adapter = RSSAdapter()
@@ -643,7 +642,7 @@ class TestRSSAdapter(unittest.TestCase):
         assert a.abstract == "A comprehensive survey of autonomous agents."
         assert a.published_at is not None
 
-    @patch("tentacle.sources.rss.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_content_extraction_enabled(self, mock_urlopen_fn: MagicMock) -> None:
         feed_resp = _mock_urlopen(RSS_RESPONSE)
         html_resp = _mock_urlopen_html(HTML_PAGE)
@@ -657,7 +656,7 @@ class TestRSSAdapter(unittest.TestCase):
         assert "Main content paragraph" in articles[0].full_text
         assert mock_urlopen_fn.call_count == 2
 
-    @patch("tentacle.sources.rss.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_content_extraction_disabled_by_default(self, mock_urlopen_fn: MagicMock) -> None:
         mock_urlopen_fn.return_value = _mock_urlopen(RSS_RESPONSE)
         adapter = RSSAdapter()
@@ -667,7 +666,7 @@ class TestRSSAdapter(unittest.TestCase):
         assert articles[0].full_text is None
         assert mock_urlopen_fn.call_count == 1
 
-    @patch("tentacle.sources.rss.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_content_extraction_fetch_error(self, mock_urlopen_fn: MagicMock) -> None:
         feed_resp = _mock_urlopen(RSS_RESPONSE)
         mock_urlopen_fn.side_effect = [feed_resp, urllib.error.URLError("connection refused")]
@@ -680,22 +679,23 @@ class TestRSSAdapter(unittest.TestCase):
         assert articles[0].full_text is None
         assert articles[0].title == "New Findings in Code Gen"
 
-    @patch("tentacle.sources.rss.urllib.request.urlopen")
+    @patch("tentacle.sources.base.urllib.request.urlopen")
     def test_content_extraction_size_limit(self, mock_urlopen_fn: MagicMock) -> None:
         large_html = b"<p>" + b"x" * 2_000_000 + b"</p>"
         feed_resp = _mock_urlopen(RSS_RESPONSE)
-        # simulate read(max_bytes) returning only max_bytes of data
-        html_resp = _mock_urlopen_html(large_html[:1_048_576])
+        # fetch_with_backoff returns all bytes; _fetch_content slices to max_bytes
+        html_resp = _mock_urlopen(large_html)
         mock_urlopen_fn.side_effect = [feed_resp, html_resp]
 
         adapter = RSSAdapter(extract_content=True, content_max_bytes=1_048_576)
         articles = adapter.fetch(["https://blog.example.com/feed"], max_results=10)
 
         assert len(articles) == 1
-        # No crash, content may be present but bounded
+        # No crash, content is bounded by slice
         assert mock_urlopen_fn.call_count == 2
-        # Verify _fetch_content passes max_bytes to resp.read()
-        html_resp.read.assert_called_with(1_048_576)
+        ft = articles[0].full_text
+        assert ft is not None
+        assert len(ft) <= 1_048_576
 
 
 class TestHTMLToTextParser(unittest.TestCase):

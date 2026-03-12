@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
-import time
-import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime, timedelta
 
 from tentacle.dedup import fingerprint
 from tentacle.models import Article
-from tentacle.sources.base import SourceAdapter
+from tentacle.sources.base import SourceAdapter, fetch_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -49,41 +47,17 @@ class SemanticScholarAdapter(SourceAdapter):
 
         return articles[:max_results]
 
-    def _fetch_with_retry(self, req: urllib.request.Request) -> bytes | None:
-        """Fetch URL with retry on 429. Non-retryable errors are logged and return None."""
-        max_retries = 3
-        for attempt in range(max_retries + 1):
-            try:
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    return resp.read()  # type: ignore[no-any-return]
-            except urllib.error.HTTPError as e:
-                if e.code != 429:
-                    logger.error("Semantic Scholar HTTP error %d: %s", e.code, e)
-                    return None
-                # 429 rate-limit handling
-                retry_after = 1
-                raw = e.headers.get("Retry-After")
-                if raw is not None:
-                    try:
-                        retry_after = int(raw)
-                    except ValueError:
-                        logger.debug(
-                            "Retry-After header is not an integer (%r), defaulting to 1s", raw
-                        )
-                if attempt < max_retries:
-                    logger.warning(
-                        "Semantic Scholar rate-limited (429), retrying in %ds (attempt %d/%d)",
-                        retry_after,
-                        attempt + 1,
-                        max_retries,
-                    )
-                    time.sleep(retry_after)
-                else:
-                    logger.error("Semantic Scholar rate-limited (429), max retries exhausted")
-            except urllib.error.URLError as e:
-                logger.error("Semantic Scholar network error: %s", e)
-                return None
-        return None
+    @staticmethod
+    def _fetch_with_retry(req: urllib.request.Request) -> bytes | None:
+        """Fetch URL with exponential backoff on retryable errors."""
+        try:
+            return fetch_with_backoff(req, source_name="Semantic Scholar")
+        except urllib.error.HTTPError as e:
+            logger.error("Semantic Scholar HTTP error %d: %s", e.code, e)
+            return None
+        except urllib.error.URLError as e:
+            logger.error("Semantic Scholar network error: %s", e)
+            return None
 
     def _search(self, query: str, limit: int) -> list[Article]:
         query_params: dict[str, str | int] = {
