@@ -34,34 +34,62 @@ decay_interval_days = 60
 [sources.arxiv]
 enabled = true
 queries = [
-    "autonomous code generation",
-    "LLM software engineering",
-    "self-improving AI systems",
-    "automated software testing LLM",
+    "LLM code generation iterative refinement",
+    "LLM as judge code evaluation",
+    "automated program repair large language model",
+    "self-improving code generation feedback loop",
+    "cost optimization LLM inference",
+    "automated software testing generation LLM",
+    "agentic software engineering SWE-bench",
+    "program synthesis neural",
+    "LLM automated debugging fault localization",
+    "multi-agent code generation",
+    "prompt optimization code generation",
 ]
 max_results = 50
 
 [sources.semantic_scholar]
 enabled = true
 queries = [
-    "autonomous code generation large language models",
-    "LLM as judge evaluation",
-    "self-improving software systems",
+    "LLM iterative code generation feedback",
+    "LLM as judge software evaluation",
+    "automated program repair language model",
+    "autonomous software engineering agent",
+    "agentic coding SWE-bench",
+    "neural program synthesis verification",
+    "LLM multi-agent software development",
+    "prompt optimization meta-prompting",
 ]
 max_results = 50
 
 [sources.hackernews]
 enabled = true
 queries = [
-    "autonomous code generation",
-    "LLM code review",
-    "software dark factory",
-    "AI software engineering",
+    "autonomous coding agent",
+    "LLM code generation",
+    "AI code review",
+    "vibe coding",
+    "Claude code",
+    "agentic coding",
+    "SWE-bench",
+    "AI debugging",
+    "code agent tool use",
 ]
 max_results = 30
 
 [sources.rss]
-enabled = false
-queries = []
+enabled = true
+extract_content = true
+queries = [
+    "https://simonwillison.net/atom/everything/",
+    "https://www.latent.space/feed",
+    "https://lilianweng.github.io/index.xml",
+    "https://blog.langchain.dev/rss/",
+    "https://www.interconnects.ai/feed",
+    "https://bair.berkeley.edu/blog/feed.xml",
+    "https://research.google/blog/rss/",
+    "https://github.blog/tag/llm/feed/",
+    "https://karpathy.bearblog.dev/feed/",
+    "https://huggingface.co/blog/feed.xml",
+]
 max_results = 50
-# extract_content = false

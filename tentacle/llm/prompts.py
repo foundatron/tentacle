@@ -9,12 +9,17 @@ OctopusGarden generates code from specs using an attractor loop (LLM generates, 
 scores, failures feed back). Key areas of interest:
 - Autonomous code generation and self-improving systems
 - LLM-as-judge evaluation and scoring
-- Prompt engineering for code generation
+- Prompt engineering and prompt optimization for code generation
 - Software testing automation and validation
 - Convergence algorithms and optimization
 - Docker/container orchestration for build/test
-- Cost optimization for LLM API usage
+- Cost optimization for LLM inference and API usage
 - Software dark factories and lights-out manufacturing
+- Agentic coding and software engineering agents (SWE-bench, tool use)
+- Program synthesis and automated program repair
+- Multi-agent systems for software development
+- Automated debugging and fault localization
+- Meta-prompting and self-refinement techniques
 
 You will be given an article title and abstract. Rate its relevance to OctopusGarden on a \
 scale of 0.0 to 1.0.
@@ -34,12 +39,17 @@ OctopusGarden generates code from specs using an attractor loop (LLM generates, 
 scores, failures feed back). Key areas of interest:
 - Autonomous code generation and self-improving systems
 - LLM-as-judge evaluation and scoring
-- Prompt engineering for code generation
+- Prompt engineering and prompt optimization for code generation
 - Software testing automation and validation
 - Convergence algorithms and optimization
 - Docker/container orchestration for build/test
-- Cost optimization for LLM API usage
+- Cost optimization for LLM inference and API usage
 - Software dark factories and lights-out manufacturing
+- Agentic coding and software engineering agents (SWE-bench, tool use)
+- Program synthesis and automated program repair
+- Multi-agent systems for software development
+- Automated debugging and fault localization
+- Meta-prompting and self-refinement techniques
 
 You will be given a numbered list of articles (title and abstract). Rate each article's \
 relevance to OctopusGarden on a scale of 0.0 to 1.0.
