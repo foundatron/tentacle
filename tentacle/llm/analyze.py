@@ -64,7 +64,12 @@ ANALYSIS_TOOL: anthropic.types.ToolParam = {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 5,
-                "description": "Implementation maturity score 1-5.",
+                "description": (
+                    "Implementation maturity score 1-5. "
+                    "Score 1 if the current approach is adequate. "
+                    "Score 4-5 only if the proposal addresses a real gap "
+                    "and benefits outweigh complexity."
+                ),
             },
             "maturity_reasoning": {
                 "type": "string",

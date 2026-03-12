@@ -135,6 +135,8 @@ def create_issue(
                 body,
                 "--label",
                 label,
+                "--label",
+                f"m{analysis.maturity_score}",
             ],
             capture_output=True,
             text=True,

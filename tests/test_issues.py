@@ -194,6 +194,35 @@ class TestIssueCreation(unittest.TestCase):
         assert result.github_number == 42
         assert result.maturity_score == 4
 
+        args = mock_run.call_args[0][0]
+        # Should have both the primary label and the maturity label
+        label_indices = [i for i, a in enumerate(args) if a == "--label"]
+        assert len(label_indices) == 2
+        assert args[label_indices[0] + 1] == "tentacle"
+        assert args[label_indices[1] + 1] == "m4"
+
+    @patch("tentacle.issues.check_duplicate", return_value=None)
+    @patch("tentacle.issues.subprocess.run")
+    def test_maturity_label_in_args(self, mock_run: MagicMock, _mock_dup: MagicMock) -> None:
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="https://github.com/foundatron/octopusgarden/issues/10\n",
+        )
+
+        analysis = _make_analysis()
+        analysis.maturity_score = 3
+
+        create_issue(
+            _make_article(),
+            analysis,
+            repo="foundatron/octopusgarden",
+            label="tentacle",
+        )
+
+        args = mock_run.call_args[0][0]
+        label_indices = [i for i, a in enumerate(args) if a == "--label"]
+        assert args[label_indices[1] + 1] == "m3"
+
     @patch("tentacle.issues.check_duplicate", return_value=None)
     @patch("tentacle.issues.subprocess.run")
     def test_gh_failure_returns_none(self, mock_run: MagicMock, _mock_dup: MagicMock) -> None:
