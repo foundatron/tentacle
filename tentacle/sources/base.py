@@ -37,7 +37,6 @@ def fetch_with_backoff(
     or any non-retryable error immediately.
     """
     label = source_name or "source"
-    last_exc: urllib.error.HTTPError | None = None
 
     for attempt in range(max_retries + 1):
         try:
@@ -46,7 +45,6 @@ def fetch_with_backoff(
         except urllib.error.HTTPError as exc:
             if exc.code not in _RETRYABLE_STATUS_CODES:
                 raise
-            last_exc = exc
             if attempt == max_retries:
                 logger.error("%s: HTTP %d, max retries exhausted", label, exc.code)
                 raise
@@ -68,8 +66,7 @@ def fetch_with_backoff(
             )
             time.sleep(delay)
 
-    # Should be unreachable, but keeps mypy happy.
-    raise last_exc  # type: ignore[misc]
+    raise AssertionError("unreachable: loop always raises or returns")
 
 
 class SourceAdapter(abc.ABC):

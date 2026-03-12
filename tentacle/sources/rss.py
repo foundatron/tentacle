@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html.parser
 import logging
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -51,14 +52,21 @@ class _HTMLToTextParser(html.parser.HTMLParser):
 
 
 def _fetch_content(url: str, timeout: int, max_bytes: int) -> str | None:
-    """Fetch a URL and return extracted plain text, or None on any failure."""
+    """Fetch a URL and return extracted plain text, or None on any failure.
+
+    Uses a direct urlopen (no retry) because content fetches are best-effort;
+    this also preserves charset detection from Content-Type and limits the
+    socket read to *max_bytes* to avoid buffering huge responses.
+    """
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "tentacle/0.1"})
-        raw = fetch_with_backoff(req, timeout=timeout, source_name="RSS content")
-        data = raw[:max_bytes]
-        # Sniff charset from Content-Type if we had one — but fetch_with_backoff
-        # returns raw bytes so we just try utf-8.
-        html_text = data.decode("utf-8", errors="replace")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            content_type: str = resp.headers.get("Content-Type", "")
+            charset = "utf-8"
+            if "charset=" in content_type:
+                charset = content_type.split("charset=")[-1].split(";")[0].strip().strip("\"'")
+            data = resp.read(max_bytes)
+        html_text = data.decode(charset, errors="replace")
         parser = _HTMLToTextParser()
         parser.feed(html_text)
         text = parser.get_text()

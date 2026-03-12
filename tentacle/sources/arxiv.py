@@ -97,7 +97,7 @@ class ArxivAdapter(SourceAdapter):
             if len(entries) < page_size:
                 break
 
-        logger.info("arXiv: %d results for '%s'", len(articles), query)
+        logger.info("arXiv: %d results (cap %d) for '%s'", len(articles), max_results, query)
         return articles
 
     def _parse_entry(self, entry: ET.Element) -> Article | None:
