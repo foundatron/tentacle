@@ -245,11 +245,11 @@ class TestArxivAdapter(unittest.TestCase):
         mock_urlopen_fn.side_effect = _make_http_error(503)
 
         adapter = ArxivAdapter()
-        with self.assertLogs("tentacle.sources.arxiv", level="WARNING") as log:
+        with self.assertLogs("tentacle.sources.arxiv", level="ERROR") as log:
             articles = adapter.fetch(["query"], max_results=10)
 
         assert articles == []
-        assert any("skipping remaining queries" in m for m in log.output)
+        assert any("arXiv query failed" in m for m in log.output)
 
     @patch("tentacle.sources.arxiv.datetime")
     @patch("tentacle.sources.base.urllib.request.urlopen")

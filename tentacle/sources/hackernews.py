@@ -48,9 +48,11 @@ class HackerNewsAdapter(SourceAdapter):
             try:
                 results = self._search(query, per_query)
                 articles.extend(results)
-            except RetriesExhaustedError:
-                logger.warning("HN: rate-limited, skipping remaining queries")
-                break
+            except RetriesExhaustedError as exc:
+                if exc.status_code == 429:
+                    logger.warning("HN: rate-limited, skipping remaining queries")
+                    break
+                logger.exception("HN query failed: %s", query)
             except Exception:
                 logger.exception("HN query failed: %s", query)
 

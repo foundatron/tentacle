@@ -20,11 +20,10 @@ _DEFAULT_INITIAL_DELAY = 2.0
 class RetriesExhaustedError(Exception):
     """Raised when fetch_with_backoff exhausts all retries."""
 
-    def __init__(self, source_name: str, status_code: int, cause: Exception) -> None:
+    def __init__(self, source_name: str, status_code: int) -> None:
         self.source_name = source_name
         self.status_code = status_code
         super().__init__(f"{source_name}: HTTP {status_code}, max retries exhausted")
-        self.__cause__ = cause
 
 
 # HTTP status codes worth retrying.
@@ -44,7 +43,7 @@ def fetch_with_backoff(
     Retries on 429, 500, 502, 503, 504.  Respects the ``Retry-After`` header
     as a *floor* for the computed backoff delay.
 
-    Raises the last :class:`urllib.error.HTTPError` if retries are exhausted,
+    Raises :class:`RetriesExhaustedError` if retries are exhausted,
     or any non-retryable error immediately.
     """
     label = source_name or "source"
@@ -58,7 +57,7 @@ def fetch_with_backoff(
                 raise
             if attempt == max_retries:
                 logger.error("%s: HTTP %d, max retries exhausted", label, exc.code)
-                raise RetriesExhaustedError(label, exc.code, exc) from exc
+                raise RetriesExhaustedError(label, exc.code) from exc
             delay = initial_delay * (2**attempt)
             # Respect Retry-After header as a floor.
             raw_retry = exc.headers.get("Retry-After") if exc.headers else None

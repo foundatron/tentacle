@@ -42,9 +42,11 @@ class SemanticScholarAdapter(SourceAdapter):
             try:
                 results = self._search(query, per_query)
                 articles.extend(results)
-            except RetriesExhaustedError:
-                logger.warning("Semantic Scholar: rate-limited, skipping remaining queries")
-                break
+            except RetriesExhaustedError as exc:
+                if exc.status_code == 429:
+                    logger.warning("Semantic Scholar: rate-limited, skipping remaining queries")
+                    break
+                logger.exception("Semantic Scholar query failed: %s", query)
             except Exception:
                 logger.exception("Semantic Scholar query failed: %s", query)
 
