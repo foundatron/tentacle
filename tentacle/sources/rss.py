@@ -13,13 +13,13 @@ from email.utils import parsedate_to_datetime
 
 from tentacle.dedup import fingerprint
 from tentacle.models import Article
-from tentacle.sources.base import SourceAdapter, fetch_with_backoff
+from tentacle.sources.base import RetriesExhaustedError, SourceAdapter, fetch_with_backoff
 
 logger = logging.getLogger(__name__)
 
 _ATOM_NS = "{http://www.w3.org/2005/Atom}"
 _SKIP_TAGS = {"script", "style", "nav", "header", "footer"}
-_CONTENT_FETCH_WORKERS = 10
+_CONTENT_FETCH_WORKERS = 4
 
 
 class _HTMLToTextParser(html.parser.HTMLParser):
@@ -54,23 +54,22 @@ class _HTMLToTextParser(html.parser.HTMLParser):
 def _fetch_content(url: str, timeout: int, max_bytes: int) -> str | None:
     """Fetch a URL and return extracted plain text, or None on any failure.
 
-    Uses a direct urlopen (no retry) because content fetches are best-effort;
-    this also preserves charset detection from Content-Type and limits the
-    socket read to *max_bytes* to avoid buffering huge responses.
+    Uses fetch_with_backoff to handle 429/5xx errors gracefully, with a
+    short retry budget (3 attempts) since content fetches are best-effort.
     """
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "tentacle/0.1"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            content_type: str = resp.headers.get("Content-Type", "")
-            charset = "utf-8"
-            if "charset=" in content_type:
-                charset = content_type.split("charset=")[-1].split(";")[0].strip().strip("\"'")
-            data = resp.read(max_bytes)
-        html_text = data.decode(charset, errors="replace")
+        data = fetch_with_backoff(req, timeout=timeout, max_retries=2, source_name="RSS content")
+        # Limit to max_bytes after fetch.
+        data = data[:max_bytes]
+        html_text = data.decode("utf-8", errors="replace")
         parser = _HTMLToTextParser()
         parser.feed(html_text)
         text = parser.get_text()
         return text if text else None
+    except RetriesExhaustedError:
+        logger.warning("Content fetch rate-limited, skipping: %s", url)
+        return None
     except Exception:
         logger.warning("Failed to fetch content from %s", url, exc_info=True)
         return None

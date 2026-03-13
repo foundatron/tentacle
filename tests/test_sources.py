@@ -684,18 +684,15 @@ class TestRSSAdapter(unittest.TestCase):
     def test_content_extraction_size_limit(self, mock_urlopen_fn: MagicMock) -> None:
         large_html = b"<p>" + b"x" * 2_000_000 + b"</p>"
         feed_resp = _mock_urlopen(RSS_RESPONSE)
-        # simulate read(max_bytes) returning only max_bytes of data
-        html_resp = _mock_urlopen_html(large_html[:1_048_576])
+        html_resp = _mock_urlopen_html(large_html)
         mock_urlopen_fn.side_effect = [feed_resp, html_resp]
 
         adapter = RSSAdapter(extract_content=True, content_max_bytes=1_048_576)
         articles = adapter.fetch(["https://blog.example.com/feed"], max_results=10)
 
         assert len(articles) == 1
-        # No crash, content may be present but bounded
+        # No crash, content is truncated post-fetch then parsed
         assert mock_urlopen_fn.call_count == 2
-        # Verify _fetch_content passes max_bytes to resp.read()
-        html_resp.read.assert_called_with(1_048_576)
 
 
 class TestHTMLToTextParser(unittest.TestCase):
