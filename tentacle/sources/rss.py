@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import html.parser
 import logging
+import threading
+import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from urllib.parse import urlparse
 
 from tentacle.dedup import fingerprint
 from tentacle.models import Article
@@ -20,6 +23,7 @@ logger = logging.getLogger(__name__)
 _ATOM_NS = "{http://www.w3.org/2005/Atom}"
 _SKIP_TAGS = {"script", "style", "nav", "header", "footer"}
 _CONTENT_FETCH_WORKERS = 4
+_PER_DOMAIN_DELAY = 2.0  # seconds between requests to the same domain
 
 
 class _HTMLToTextParser(html.parser.HTMLParser):
@@ -51,12 +55,50 @@ class _HTMLToTextParser(html.parser.HTMLParser):
         return " ".join(" ".join(self._parts).split())
 
 
-def _fetch_content(url: str, timeout: int, max_bytes: int) -> str | None:
+class _DomainThrottle:
+    """Per-domain rate limiter to avoid hammering a single host."""
+
+    def __init__(self, delay: float = _PER_DOMAIN_DELAY) -> None:
+        self._delay = delay
+        self._last_request: dict[str, float] = {}
+        self._blocked: set[str] = set()
+        self._lock = threading.Lock()
+
+    def wait(self, domain: str) -> bool:
+        """Wait until it's safe to request this domain.
+
+        Returns False if the domain has been blocked (429 exhausted).
+        """
+        with self._lock:
+            if domain in self._blocked:
+                return False
+            last = self._last_request.get(domain, 0.0)
+            wait_time = self._delay - (time.monotonic() - last)
+        if wait_time > 0:
+            time.sleep(wait_time)
+        with self._lock:
+            if domain in self._blocked:
+                return False
+            self._last_request[domain] = time.monotonic()
+        return True
+
+    def block(self, domain: str) -> None:
+        """Mark a domain as blocked — all further waits return False."""
+        with self._lock:
+            self._blocked.add(domain)
+
+
+def _fetch_content(url: str, timeout: int, max_bytes: int, throttle: _DomainThrottle) -> str | None:
     """Fetch a URL and return extracted plain text, or None on any failure.
 
     Uses fetch_with_backoff to handle 429/5xx errors gracefully, with a
     short retry budget (3 attempts) since content fetches are best-effort.
+    Respects per-domain throttling to avoid rate limits.
     """
+    domain = urlparse(url).netloc
+    if not throttle.wait(domain):
+        logger.debug("Skipping %s (domain %s blocked by rate limit)", url, domain)
+        return None
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "tentacle/0.1"})
         data = fetch_with_backoff(req, timeout=timeout, max_retries=2, source_name="RSS content")
@@ -68,7 +110,8 @@ def _fetch_content(url: str, timeout: int, max_bytes: int) -> str | None:
         text = parser.get_text()
         return text if text else None
     except RetriesExhaustedError:
-        logger.warning("Content fetch rate-limited, skipping: %s", url)
+        logger.warning("Content fetch rate-limited, blocking domain %s: %s", domain, url)
+        throttle.block(domain)
         return None
     except Exception:
         logger.warning("Failed to fetch content from %s", url, exc_info=True)
@@ -128,16 +171,26 @@ class RSSAdapter(SourceAdapter):
         return articles
 
     def _fetch_contents_parallel(self, articles: list[Article]) -> list[Article]:
-        """Fetch full-text content for all articles in parallel."""
+        """Fetch full-text content for all articles in parallel.
+
+        Uses per-domain throttling so we don't blast a single host.
+        When a domain returns 429 after retries, all remaining fetches
+        for that domain are skipped.
+        """
         urls: list[tuple[int, str]] = [(i, a.url) for i, a in enumerate(articles) if a.url]
         if not urls:
             return articles
 
+        throttle = _DomainThrottle()
         workers = min(_CONTENT_FETCH_WORKERS, len(urls))
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(
-                    _fetch_content, url, self._content_timeout, self._content_max_bytes
+                    _fetch_content,
+                    url,
+                    self._content_timeout,
+                    self._content_max_bytes,
+                    throttle,
                 ): i
                 for i, url in urls
             }
