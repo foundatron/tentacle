@@ -37,11 +37,15 @@ def fetch_with_backoff(
     max_retries: int = _DEFAULT_MAX_RETRIES,
     initial_delay: float = _DEFAULT_INITIAL_DELAY,
     source_name: str = "",
+    max_bytes: int = 0,
 ) -> bytes:
     """Fetch a URL with exponential backoff on retryable HTTP errors.
 
     Retries on 429, 500, 502, 503, 504.  Respects the ``Retry-After`` header
     as a *floor* for the computed backoff delay.
+
+    When *max_bytes* > 0 the socket read is capped to avoid buffering
+    arbitrarily large responses into memory.
 
     Raises :class:`RetriesExhaustedError` if retries are exhausted,
     or any non-retryable error immediately.
@@ -51,7 +55,7 @@ def fetch_with_backoff(
     for attempt in range(max_retries + 1):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read()  # type: ignore[no-any-return]
+                return resp.read(max_bytes) if max_bytes > 0 else resp.read()  # type: ignore[no-any-return]
         except urllib.error.HTTPError as exc:
             if exc.code not in _RETRYABLE_STATUS_CODES:
                 raise

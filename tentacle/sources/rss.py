@@ -72,14 +72,18 @@ class _DomainThrottle:
         with self._lock:
             if domain in self._blocked:
                 return False
+            now = time.monotonic()
             last = self._last_request.get(domain, 0.0)
-            wait_time = self._delay - (time.monotonic() - last)
-        if wait_time > 0:
-            time.sleep(wait_time)
+            earliest = last + self._delay
+            sleep_time = earliest - now
+            # Reserve our slot now so the next thread computes a later slot.
+            self._last_request[domain] = max(earliest, now)
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+        # Re-check blocked after sleeping (another thread may have hit 429).
         with self._lock:
             if domain in self._blocked:
                 return False
-            self._last_request[domain] = time.monotonic()
         return True
 
     def block(self, domain: str) -> None:
@@ -101,9 +105,9 @@ def _fetch_content(url: str, timeout: int, max_bytes: int, throttle: _DomainThro
         return None
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "tentacle/0.1"})
-        data = fetch_with_backoff(req, timeout=timeout, max_retries=2, source_name="RSS content")
-        # Limit to max_bytes after fetch.
-        data = data[:max_bytes]
+        data = fetch_with_backoff(
+            req, timeout=timeout, max_retries=2, source_name="RSS content", max_bytes=max_bytes
+        )
         html_text = data.decode("utf-8", errors="replace")
         parser = _HTMLToTextParser()
         parser.feed(html_text)

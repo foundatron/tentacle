@@ -116,7 +116,7 @@ def _mock_urlopen(data: bytes, content_type: str = "text/xml") -> MagicMock:
 
 def _mock_urlopen_html(data: bytes) -> MagicMock:
     mock_resp = MagicMock()
-    mock_resp.read.return_value = data
+    mock_resp.read.side_effect = lambda n=0: data[:n] if n > 0 else data
     mock_resp.headers.get.return_value = "text/html; charset=utf-8"
     mock_resp.__enter__ = lambda s: s
     mock_resp.__exit__ = MagicMock(return_value=False)
@@ -691,7 +691,7 @@ class TestRSSAdapter(unittest.TestCase):
         articles = adapter.fetch(["https://blog.example.com/feed"], max_results=10)
 
         assert len(articles) == 1
-        # No crash, content is truncated post-fetch then parsed
+        # No crash, content is bounded at the socket level via max_bytes
         assert mock_urlopen_fn.call_count == 2
 
 
