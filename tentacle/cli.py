@@ -176,8 +176,15 @@ def cmd_run(args: argparse.Namespace, config: Config) -> None:
             articles = adapter.fetch(queries, max_results)
             articles_found = len(articles)
 
-            # Dedup
-            new_articles = [a for a in articles if not store.article_exists(a.id)]
+            # Dedup: remove duplicates within the batch (same article
+            # returned by multiple queries), then filter against the DB.
+            seen_ids: set[str] = set()
+            unique_articles = []
+            for a in articles:
+                if a.id not in seen_ids:
+                    seen_ids.add(a.id)
+                    unique_articles.append(a)
+            new_articles = [a for a in unique_articles if not store.article_exists(a.id)]
             if not args.dry_run:
                 for a in new_articles:
                     store.insert_article(a)
